@@ -42,14 +42,14 @@ def calc_cond_ratio(f_val,left_val,right_val,z_indices,prev_cond_indices=None):
     return ratio,support
 
 
-def gen_rule_dict_for_one_target(x,fids,target_indices,min_support=500,num_grids=20,max_depth=5,local_x=None,verbose=False):
+def gen_top_rule_dict_for_one_target(x,fids,target_indices,min_support=500,num_grids=20,max_depth=5,local_x=None,verbose=False):
     
     fids_copy = list(fids).copy()
     prev_cond_indices = None
     rule_dict = {}
 
     for f in fids_copy:
-        ratio,left,right,sup,prev_cond_indices = add_one_rule(x,f,target_indices,prev_cond_indices=prev_cond_indices,num_grids=num_grids,
+        ratio,left,right,sup,prev_cond_indices = add_top_rule(x,f,target_indices,prev_cond_indices=prev_cond_indices,num_grids=num_grids,
                         min_support=min_support,max_depth=max_depth,local_x=local_x,verbose=verbose)
         if ratio < 1.:
             continue
@@ -85,35 +85,33 @@ def remove_duplicate_rules(rules_dict):
     return rules_dict
 
 
-def add_one_rule(x,f,target_indices,prev_cond_indices=None,num_grids=20,
-                            min_support=2000,max_depth=4,local_x=None,verbose=False):
-    print("search rule for feature",f)
-    f_val = x[:,int(f)]
-    grids = np.linspace(f_val.min(),f_val.max(),num_grids) 
-    
-    grids,ratios,supports = preprocess_empty_grids(f_val,target_indices,grids,prev_cond_indices=prev_cond_indices,verbose=verbose)
-    
-    if local_x is not None:
-        if isinstance(local_x,torch.Tensor):
-            local_x = local_x.numpy()
-    
-    lx = None if local_x is None else local_x[int(f)]  
-    if lx is not None:
-        gid = np.arange(len(grids)-1)[(grids[:-1] -lx)<=0][-1]
-        peaks = [gid]
-    else:
-        peaks = find_peaks(ratios,verbose=verbose)
-        
+def add_top_rule(x,f,target_indices,prev_cond_indices=None,num_grids=20,
+                            min_support=2000,max_depth=4,local_x=None,verbose=False):        
     op_ratio = 0.
     op_left = 0.
     op_right = 0.
     op_sup = 0.
     new_prev_cond_indices = prev_cond_indices
+    
+    inv = add_potential_rules(x,f,target_indices,prev_cond_indices=prev_cond_indices,num_grids=num_grids,min_support=min_support,
+                                local_x=local_x,top_K=1,verbose=verbose)
+    if inv is not None:
+        op_ratio,op_left,op_right,op_sup,new_prev_cond_indices = inv[0]
+                   
+    # if local_x is not None:
+    #     print("check local",lx,op_left,op_right)
+                
+    return op_ratio,op_left,op_right,op_sup, new_prev_cond_indices
+
+
+
+def search_feature_intervals(f_val,peaks,grids,ratios,supports,target_indices,prev_cond_indices=None,min_support=2000,top_K=1,verbose=False):
+    intervals = []
     for gid in peaks:        
         cond_ratio,left,right,sup = raise_feature_interval(f_val,grids,gid,ratios=ratios,supports=supports,target_indices=target_indices,
                                                            prev_cond_indices=prev_cond_indices,min_support=min_support,verbose=verbose)     
 
-        if sup < min_support or cond_ratio < 1. or cond_ratio < op_ratio:
+        if sup < min_support or cond_ratio < 1.:
             #print('not qualified',sup,cond_ratio)
             continue
         else:          
@@ -126,15 +124,41 @@ def add_one_rule(x,f,target_indices,prev_cond_indices=None,num_grids=20,
                     new_prev_cond_indices = (f_val>=left)&(f_val<=right)
                 else:
                     new_prev_cond_indices = prev_cond_indices & ((f_val>=left)&(f_val<=right))
-                op_ratio = cond_ratio
-                op_left = left
-                op_right = right
-                op_sup = sup
-                
+                intervals.append((cond_ratio,left,right,sup,new_prev_cond_indices))
+    
+    if len(intervals) == 0:
+        return None
+    
+    intervals.sort(key=lambda x: x[0], reverse=True) 
+    return intervals[:top_K]   
+
+
+
+def add_potential_rules(x,f,target_indices,prev_cond_indices=None,num_grids=20,min_support=2000,
+                        local_x=None,top_K=1,verbose=False):
+    print("search rule for feature",f)
+    f_val = x[:,int(f)]
+    grids = np.linspace(f_val.min(),f_val.max(),num_grids) 
+
+    grids,ratios,supports = preprocess_empty_grids(f_val,target_indices,grids,prev_cond_indices=prev_cond_indices,verbose=verbose)
+
     if local_x is not None:
-        print("check local",lx,op_left,op_right)
-                
-    return op_ratio,op_left,op_right,op_sup, new_prev_cond_indices
+        if isinstance(local_x,torch.Tensor):
+            local_x = local_x.numpy()
+
+    lx = None if local_x is None else local_x[int(f)]  
+    if lx is not None:
+        gid = np.arange(len(grids)-1)[(grids[:-1] -lx)<=0][-1]
+        peaks = [gid]
+    else:
+        peaks = find_peaks(ratios,verbose=verbose)
+        
+    inv = search_feature_intervals(f_val,peaks,grids,ratios,supports,target_indices,prev_cond_indices=prev_cond_indices,
+                                    min_support=min_support,top_K=top_K,verbose=verbose)
+
+    return inv
+        
+    
 
 
 def preprocess_empty_grids(f_val,target_indices,grids,prev_cond_indices=None,verbose=False):
@@ -339,13 +363,13 @@ def target_prob_with_rules(rule_list,x,zids=None,y=None,c=-1,verbose=False):
 
 
 
-def find_pattern_for_one_target(x,y,target_indices,itemsets,c=1,num_grids=20,omega=0.1,min_support=500,
+def find_top_pattern_for_one_target(x,y,target_indices,itemsets,c=1,num_grids=20,omega=0.1,min_support=500,
                                 max_depth=4,local_x=None,verbose=False,feature_types=None):
 
     fids = gen_freq_feature_set(itemsets,min_support=min_support,max_len=max_depth*2)
     fids = np.array(fids).astype(int)-1
     print('feature set',fids)
-    rule_dict = gen_rule_dict_for_one_target(x,fids,target_indices,min_support=min_support,num_grids=num_grids,
+    rule_dict = gen_top_rule_dict_for_one_target(x,fids,target_indices,min_support=min_support,num_grids=num_grids,
                                              max_depth=max_depth,local_x=local_x,verbose=verbose)
 
 
@@ -362,10 +386,10 @@ def find_pattern_for_one_target(x,y,target_indices,itemsets,c=1,num_grids=20,ome
     return processed_rules
 
 
-def gen_rule_list_for_one_target_greedy(x,comb_z,zids,min_support=500,num_grids=20,max_depth=5,local_x=None):
+def gen_rule_list_for_one_target_greedy(x,fids,target_indices,min_support=500,num_grids=20,max_depth=5,top_K=3,local_x=None):
     
-    rule_tree_z = build_rule_tree(list(comb_z),x,zids,grid_num=num_grids,min_support=min_support,
-                                                 max_depth=max_depth,local_x=local_x)
+    rule_tree_z = build_rule_tree(list(fids),x,target_indices,grid_num=num_grids,min_support=min_support,
+                                                 max_depth=max_depth,top_K=top_K,local_x=local_x)
     if rule_tree_z is None:
         rule_dict_z = {}
     else:
@@ -376,49 +400,79 @@ def gen_rule_list_for_one_target_greedy(x,comb_z,zids,min_support=500,num_grids=
     return rule_dict_z
 
 
-def build_rule_tree(fids,x,target_indices,grid_num=20,min_support=2000,max_depth=4,local_x=None):
+def build_rule_tree(fids,x,target_indices,grid_num=20,min_support=2000,max_depth=4,top_K=3,local_x=None):
     print("build_rule_tree")
     rule_tree = RuleTree(min_support=min_support)
     add_branch_to_rule_tree(rule_tree.root,fids,x,target_indices,prev_cond_indices=None,grid_num=grid_num,
-                                min_support=min_support,max_depth=max_depth,local_x=local_x)
+                                min_support=min_support,max_depth=max_depth,top_K=top_K,local_x=local_x)
     return rule_tree
 
 
-def add_branch_to_rule_tree(parent,fids,x,z_indices,prev_cond_indices=None,grid_num=20,
-                            min_support=2000,max_depth=4,local_x=None,verbose=False):
+
+
+def add_branch_to_rule_tree(parent,fids,x,target_indices,prev_cond_indices=None,grid_num=20,
+                            min_support=2000,max_depth=4,top_K=3,local_x=None,verbose=False):
     fids_copy = fids.copy()
     if parent.fid != -1:
         fids_copy.remove(parent.fid)
     if len(fids_copy)>0:
-        potential_rules = gen_rule_dict_for_one_target(fids_copy,x,z_indices,min_support=min_support,grid_num=grid_num,
-                                                          prev_cond_indices=prev_cond_indices,local_x=local_x,verbose=verbose)        
+        f = fids_copy[0]
+        potential_rules = add_potential_rules(x,f,target_indices,prev_cond_indices=prev_cond_indices,num_grids=grid_num,
+                                              min_support=min_support,top_K=top_K,local_x=local_x,verbose=verbose)        
         if len(potential_rules)==0:
             return        
-        for potential_rule in potential_rules.values():
-            f = int(potential_rule["fid"])
-            if len(potential_rule["rule"])==0:
-                continue
+        for potential_rule in potential_rules:
+            cond_ratio, left, right, sup, new_prev_cond_indices = potential_rule
 
-            cond_ratio, left, right, sup = potential_rule["rule"]
             if sup < min_support or cond_ratio < 1.:
                 print('no enough support,exit',sup)
                 continue
             else:          
-                f_val = x[:,f]
-
-                if prev_cond_indices is None:
-                    new_prev_cond_indices = (f_val>=left)&(f_val<=right)
-                else:
-                    new_prev_cond_indices = prev_cond_indices & ((f_val>=left)&(f_val<=right))
-                #print('cond indices',np.sum(prev_cond_indices))
-                print('add rule',potential_rule)                    
+                print('add rule', f, potential_rule)                    
                 new_node = RuleNode(f,parent,left,right,cond_ratio,sup)
                 parent.add_child(new_node)
-                add_branch_to_rule_tree(new_node,fids_copy,x,z_indices,prev_cond_indices=new_prev_cond_indices,grid_num=grid_num,
-                                        min_support=min_support,max_depth=max_depth,local_x=local_x,verbose=verbose)
+                add_branch_to_rule_tree(new_node,fids_copy,x,target_indices,prev_cond_indices=new_prev_cond_indices,grid_num=grid_num,
+                                        min_support=min_support,max_depth=max_depth,top_K=top_K,local_x=local_x,verbose=verbose)
     else:
         print('reach max depth')
     return
+
+
+
+# def add_branch_to_rule_tree(parent,fids,x,target_indices,prev_cond_indices=None,grid_num=20,
+#                             min_support=2000,max_depth=4,top_K=3,local_x=None,verbose=False):
+#     fids_copy = fids.copy()
+#     if parent.fid != -1:
+#         fids_copy.remove(parent.fid)
+#     if len(fids_copy)>0:
+#         potential_rules = add_potential_rules(x,f,target_indices,prev_cond_indices=prev_cond_indices,num_grids=grid_num,min_support=min_support,top_K=top_K,local_x=local_x,verbose=verbose)        
+#         if len(potential_rules)==0:
+#             return        
+#         for potential_rule in potential_rules.values():
+#             f = int(potential_rule["fid"])
+#             if len(potential_rule["rule"])==0:
+#                 continue
+
+#             cond_ratio, left, right, sup = potential_rule["rule"]
+#             if sup < min_support or cond_ratio < 1.:
+#                 print('no enough support,exit',sup)
+#                 continue
+#             else:          
+#                 f_val = x[:,f]
+
+#                 if prev_cond_indices is None:
+#                     new_prev_cond_indices = (f_val>=left)&(f_val<=right)
+#                 else:
+#                     new_prev_cond_indices = prev_cond_indices & ((f_val>=left)&(f_val<=right))
+#                 #print('cond indices',np.sum(prev_cond_indices))
+#                 print('add rule',potential_rule)                    
+#                 new_node = RuleNode(f,parent,left,right,cond_ratio,sup)
+#                 parent.add_child(new_node)
+#                 add_branch_to_rule_tree(new_node,fids_copy,x,z_indices,prev_cond_indices=new_prev_cond_indices,grid_num=grid_num,
+#                                         min_support=min_support,max_depth=max_depth,local_x=local_x,verbose=verbose)
+#     else:
+#         print('reach max depth')
+#     return
 
 
 
@@ -431,9 +485,9 @@ def gen_rule_lists_for_one_latent_state(x,z,itemsets_z,zw_pos,thd_h,thd_l,min_su
     min_support_h = min_support_pos if zw_pos else min_support_neg
     min_support_l = min_support_neg if zw_pos else min_support_pos
 
-    rule_dict_higher_z = gen_rule_dict_for_one_target(x,comb_z,z>=thd_h,min_support=min_support_h,num_grids=num_grids,
+    rule_dict_higher_z = gen_top_rule_dict_for_one_target(x,comb_z,z>=thd_h,min_support=min_support_h,num_grids=num_grids,
                                                       max_depth=max_depth,local_x=local_x,verbose=verbose)
-    rule_dict_lower_z = gen_rule_dict_for_one_target(x,comb_z,z<=thd_l,min_support=min_support_l,num_grids=num_grids,
+    rule_dict_lower_z = gen_top_rule_dict_for_one_target(x,comb_z,z<=thd_l,min_support=min_support_l,num_grids=num_grids,
                                                      max_depth=max_depth,local_x=local_x,verbose=verbose)
 
     
@@ -658,7 +712,7 @@ def find_pattern_by_sample_latent_state(xi,zi,x,y,z,itemsets_z,zw_pos,c=1,num_gr
     comb_z = np.array(comb_z).astype(int)-1
     print('feature comb',comb_z)
     
-    raw_rules_dict_z = gen_rule_dict_for_one_target(x,comb_z,zids,min_support=min_support,num_grids=num_grids,
+    raw_rules_dict_z = gen_top_rule_dict_for_one_target(x,comb_z,zids,min_support=min_support,num_grids=num_grids,
                                                     max_depth=max_depth,local_x=xi,verbose=verbose)
     cond_z = "p(z>=thd_h)" if sign else "p(z<=thd_l)"
     thd_name = "thd_h" if sign else "thd_l"
@@ -668,13 +722,7 @@ def find_pattern_by_sample_latent_state(xi,zi,x,y,z,itemsets_z,zw_pos,c=1,num_gr
     dname = "rule_dict_higher_z" if sign else "rule_dict_lower_z"
     z_rules_dict[dname] = {}
     for p,rules in raw_rules_dict_z.items():
-        z_rules_dict[dname][p] = display_rules(rules["rule"],x,target_indices=zids,y=y,c=int(zw_pos*zi>0),verbose=verbose,ftypes=feature_types)
-        if z_rules_dict[dname][p]['support'] < min_support:            
-            print("#######wrong support#########",z_rules_dict["rule_dict_higher_z"][p]['support'])
-            print("check x",x[:3,:4])
-            print("check y",y.sum(),"check z",(zids).sum())
-            print(p,rules)
-            display_rules(rules["rule"],x,y,zids=zids,c=int(zw_pos*zi>0),verbose=True)    
+        z_rules_dict[dname][p] = display_rules(rules["rule"],x,target_indices=zids,y=y,c=int(zw_pos*zi>0),verbose=verbose,ftypes=feature_types)  
     
     return z_rules_dict
 
