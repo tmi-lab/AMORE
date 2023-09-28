@@ -51,7 +51,7 @@ def gen_top_rule_dict_for_one_target(x,fids,target_indices,min_support=500,num_g
     for f in fids_copy:
         ratio,left,right,sup,prev_cond_indices = add_top_rule(x,f,target_indices,prev_cond_indices=prev_cond_indices,num_grids=num_grids,
                         min_support=min_support,max_depth=max_depth,local_x=local_x,verbose=verbose)
-        if ratio < 1.:
+        if ratio <= 1.:
             continue
         rule_dict[f] = {"rule":[(f,">=",left),(f,"<=",right)],"support":(ratio,sup)}
         print('add rule',rule_dict[f])
@@ -386,18 +386,34 @@ def find_top_pattern_for_one_target(x,y,target_indices,itemsets,c=1,num_grids=20
     return processed_rules
 
 
-def gen_rule_list_for_one_target_greedy(x,fids,target_indices,min_support=500,num_grids=20,max_depth=5,top_K=3,local_x=None):
+def gen_rule_list_for_one_target_greedy(x,fids,target_indices,y=None,c=1,min_support=500,num_grids=20,max_depth=5,top_K=3,
+                                        local_x=None,feature_types=None,verbose=False,sort_by="cond_prob_target",feature_names=None,
+                                        time_index=False):
     
-    rule_tree_z = build_rule_tree(list(fids),x,target_indices,grid_num=num_grids,min_support=min_support,
+    rule_tree = build_rule_tree(list(fids),x,target_indices,grid_num=num_grids,min_support=min_support,
                                                  max_depth=max_depth,top_K=top_K,local_x=local_x)
-    if rule_tree_z is None:
-        rule_dict_z = {}
+    if rule_tree is None:
+        rule_dict = {}
     else:
-        _,rule_dict_z = rule_tree_z.get_rule_dict()
+        _,rule_dict = rule_tree.get_rule_dict()
     
-    rule_dict_z = remove_duplicate_rules(rule_dict_z)
-    
-    return rule_dict_z
+    rule_list = []
+    for rules in rule_dict.values():
+        rlist = rules["rules"]
+        assert len(rlist)%2 == 0
+        new_rlist = []
+        for k in range(0,len(rlist),2):
+            f = int(rlist[k][0])
+            r = rlist[k:k+2]
+            if feature_types is not None and feature_types[int(f)] == 'int':                
+                r = confine_int_feature_rules(r)
+            new_rlist += r
+
+        rules["rules"] = new_rlist
+        rule_list.append(display_rules(rules["rules"],x,target_indices,y,c=c,verbose=verbose))
+    if len(rule_list) > 1:
+        rule_list.sort(key=lambda x: x[sort_by], reverse=True)
+    return rule_list
 
 
 def build_rule_tree(fids,x,target_indices,grid_num=20,min_support=2000,max_depth=4,top_K=3,local_x=None):
@@ -419,19 +435,28 @@ def add_branch_to_rule_tree(parent,fids,x,target_indices,prev_cond_indices=None,
         f = fids_copy[0]
         potential_rules = add_potential_rules(x,f,target_indices,prev_cond_indices=prev_cond_indices,num_grids=grid_num,
                                               min_support=min_support,top_K=top_K,local_x=local_x,verbose=verbose)        
-        if len(potential_rules)==0:
-            return        
+        if potential_rules is None:
+            return   
+        
+        valid = False     
         for potential_rule in potential_rules:
             cond_ratio, left, right, sup, new_prev_cond_indices = potential_rule
-
-            if sup < min_support or cond_ratio < 1.:
-                print('no enough support,exit',sup)
-                continue
+            print('check potential rule',f,cond_ratio,left,right,sup)
+            if sup < min_support or cond_ratio <= 1.:
+                print('no enough support,skip',sup,cond_ratio)
+                
             else:          
-                print('add rule', f, potential_rule)                    
+                print('add rule', f, potential_rule[:-1])  
+                valid = True                  
                 new_node = RuleNode(f,parent,left,right,cond_ratio,sup)
                 parent.add_child(new_node)
                 add_branch_to_rule_tree(new_node,fids_copy,x,target_indices,prev_cond_indices=new_prev_cond_indices,grid_num=grid_num,
+                                        min_support=min_support,max_depth=max_depth,top_K=top_K,local_x=local_x,verbose=verbose)
+        if not valid:
+            print('no valid rule,skip',f)
+            fids_copy.remove(f)
+            fids_copy.insert(0,parent.fid)
+            add_branch_to_rule_tree(parent,fids_copy,x,target_indices,prev_cond_indices=prev_cond_indices,grid_num=grid_num,
                                         min_support=min_support,max_depth=max_depth,top_K=top_K,local_x=local_x,verbose=verbose)
     else:
         print('reach max depth')

@@ -48,6 +48,7 @@ class FPTree:
                 
                 
     def get_itemsets(self,min_support=20,max_depth=10):
+        # print("generating frequent itemsets",max_depth)
         itemsets = {}
         for rt,rnode in self.root.items():
             path = []
@@ -63,12 +64,7 @@ class FPTree:
             print(new_path,rnode.count)
             for cit, child in rnode.children.items():
                 self.traverse_rnode(new_path,child,itemsets,min_support,max_depth=max_depth)
-        # elif rnode.parent is not None:
-        #     #print('###start merge###')
-        #     #print('parent path',path)
-        #     sids = itemsets[tuple(path)]['sids']
-        #     sids = self.merge_branch_sids(rnode,sids=sids)
-        #     itemsets[tuple(path)].update({'sids':sids})
+
         return itemsets
         
         

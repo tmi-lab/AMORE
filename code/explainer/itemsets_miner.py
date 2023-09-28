@@ -54,6 +54,7 @@ def transform_intgrad_to_itemsets(int_j,thd=0.1,K=48):
 
 
 def gen_freq_itemsets(itemsets_z, min_support=500,max_len=10):
+    print("generating frequent itemsets",max_len)
     fp_tree = FPTree(itemsets_z,min_support)
     freq_itemsets = fp_tree.get_itemsets(min_support,max_depth=max_len)
     return freq_itemsets
@@ -75,7 +76,7 @@ def select_feature_combination(freq_itemsets,max_len=5):
 
 
 def gen_freq_feature_set(itemsets,min_support=500,max_len=5):
-    freq_itemsets = gen_freq_itemsets(itemsets,min_support=min_support)
+    freq_itemsets = gen_freq_itemsets(itemsets,min_support=min_support,max_len=max_len)
     freq = select_feature_combination(freq_itemsets,max_len=max_len)
     
     return freq
