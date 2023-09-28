@@ -42,7 +42,7 @@ def integrad(
             ## input_shift is of shape (batch_size, time_steps, input_dim) ##
             ## input_grad is of shape (batch_size, time_steps, latent_dim, input_dim) ##
             integrated_grads = torch.unsqueeze(input_shift,2) * input_grad / (n_bins)
-            integrated_grads = torch.einsum('bij,bijk->bijk',torch.abs(1./latent_shift),integrated_grads)
+            #integrated_grads = torch.einsum('bij,bijk->bijk',torch.abs(1./latent_shift),integrated_grads)
             integrated_grads[torch.isnan(integrated_grads)] = 0.
         else: 
             latent_shift_sqrdnorm = torch.sum(latent_shift**2, dim=-1, keepdim=True)

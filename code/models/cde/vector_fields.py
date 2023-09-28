@@ -41,6 +41,7 @@ class FinalTanh(torch.nn.Module):
                "".format(self.input_channels, self.hidden_channels, self.hidden_hidden_channels, self.num_hidden_layers)
 
     def forward(self, z):
+        # print("check FinalTanh",z.shape)
         z = self.linear_in(z)
         z = z.relu()
         for linear in self.linears:

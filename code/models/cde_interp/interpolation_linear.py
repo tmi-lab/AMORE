@@ -230,5 +230,5 @@ class LinearInterpolation(interpolation_base.InterpolationBase):
 
     def derivative(self, t):
         fractional_part, index = self._interpret_t(t)
-        deriv = self._derivs[..., index, :].squeeze()
+        deriv = self._derivs[..., index, :].squeeze(-2)        
         return deriv

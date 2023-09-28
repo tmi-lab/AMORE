@@ -68,8 +68,9 @@ class NeuralCDE(torch.nn.Module):
             X = torch.cat([X,atime],dim=len(X.shape)-1)
         with torch.no_grad():            
             coeffs = get_interp_coeffs(X=X,times=times,interpolate=self.interpolate,append_times=self.append_times)
+            #print('coeffs',len(coeffs))
             #controldiffeq.natural_cubic_spline_coeffs(times, X)
-        Z = self.hidden_state(times,coeffs,stream=True,flat=False)  
+            Z = self.hidden_state(times,coeffs,stream=True,flat=False)  
          
         return Z 
     
@@ -99,9 +100,9 @@ class NeuralCDE(torch.nn.Module):
         if self.interpolate == 'cubic_spline':
             interp_func = controldiffeq.NaturalCubicSpline(times, coeffs)
         elif self.interpolate == 'linear':
-            interp_func = LinearInterpolation(coeffs[0], t=times)
+            interp_func = LinearInterpolation(coeffs, t=times)
         elif self.interpolate == 'rectilinear':
-            interp_func = LinearInterpolation(coeffs[0], t=None)
+            interp_func = LinearInterpolation(coeffs, t=None)
         else:
             raise TypeError('Not supported interpolation type!')
 

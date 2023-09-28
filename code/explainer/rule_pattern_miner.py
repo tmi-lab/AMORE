@@ -502,19 +502,24 @@ def add_branch_to_rule_tree(parent,fids,x,target_indices,prev_cond_indices=None,
 
 
     
-def gen_rule_lists_for_one_latent_state(x,z,itemsets_z,zw_pos,thd_h,thd_l,min_support_pos=500,min_support_neg=2000,
-                                        num_grids=20,max_depth=5,local_x=None,verbose=False):
+def gen_rule_lists_for_one_latent_state(x,z,itemsets_z,zw_pos,thd_h,thd_l,y=None,min_support_pos=500,min_support_neg=2000,
+                                    num_grids=20,max_depth=5,local_x=None,top_K=3,feature_types=None,feature_names=None,verbose=False):
     comb_z = gen_freq_feature_set(itemsets_z,min_support=min(min_support_pos,min_support_neg),max_len=max_depth)
     comb_z = np.array(comb_z).astype(int)-1
     print('feature set',comb_z)
     min_support_h = min_support_pos if zw_pos else min_support_neg
     min_support_l = min_support_neg if zw_pos else min_support_pos
 
-    rule_dict_higher_z = gen_top_rule_dict_for_one_target(x,comb_z,z>=thd_h,min_support=min_support_h,num_grids=num_grids,
-                                                      max_depth=max_depth,local_x=local_x,verbose=verbose)
-    rule_dict_lower_z = gen_top_rule_dict_for_one_target(x,comb_z,z<=thd_l,min_support=min_support_l,num_grids=num_grids,
-                                                     max_depth=max_depth,local_x=local_x,verbose=verbose)
-
+    # rule_dict_higher_z = gen_top_rule_dict_for_one_target(x,comb_z,z>=thd_h,min_support=min_support_h,num_grids=num_grids,
+    #                                                   max_depth=max_depth,local_x=local_x,verbose=verbose)
+    # rule_dict_lower_z = gen_top_rule_dict_for_one_target(x,comb_z,z<=thd_l,min_support=min_support_l,num_grids=num_grids,
+    #                                                  max_depth=max_depth,local_x=local_x,verbose=verbose)
+    rule_dict_higher_z = gen_rule_list_for_one_target_greedy(x,comb_z,z>=thd_h,y=y,c=int(zw_pos),min_support=min_support_h,num_grids=num_grids,max_depth=max_depth,
+                                                             top_K=top_K,local_x=local_x,feature_names=feature_names,feature_types=feature_types,
+                                                             time_index=False,verbose=verbose)
+    rule_dict_lower_z = gen_rule_list_for_one_target_greedy(x,comb_z,z<=thd_l,y=y,c=int(1-zw_pos),min_support=min_support_l,num_grids=num_grids,max_depth=max_depth,
+                                                             top_K=top_K,local_x=local_x,feature_names=feature_names,feature_types=feature_types,
+                                                             time_index=False,verbose=verbose)
     
     return rule_dict_higher_z,rule_dict_lower_z
 
@@ -522,41 +527,47 @@ def gen_rule_lists_for_one_latent_state(x,z,itemsets_z,zw_pos,thd_h,thd_l,min_su
 
 
 def find_pattern_by_latent_state(x,z,itemsets_z,zw_pos,y=None,c=1,num_grids=20,omega=0.1,min_support_pos=500,min_support_neg=2000,
-                                 max_depth=4,feature_types=None,local_x=None,verbose=False):
+                                 max_depth=4,local_x=None,top_K=3,feature_names=None,feature_types=None,verbose=False):
     thd_h,thd_l = scan_thresholds_for_one_latent_state(z,y==c,zw_pos=zw_pos,omega=omega,min_support_pos=min_support_pos,
                                                        min_support_neg=min_support_neg,num_grids=num_grids)
     print("thd_h",thd_h,"thd_l",thd_l,"pos",zw_pos)
-    rule_list_higher_z,rule_list_lower_z = gen_rule_lists_for_one_latent_state(x,z,itemsets_z,zw_pos,thd_h,thd_l,min_support_pos=min_support_pos,
-                                                                               min_support_neg=min_support_neg,num_grids=num_grids,max_depth=max_depth,verbose=verbose) 
+    rule_list_higher_z,rule_list_lower_z = gen_rule_lists_for_one_latent_state(x,z,itemsets_z,zw_pos,thd_h,thd_l,y=y,min_support_pos=min_support_pos,
+                                                                               min_support_neg=min_support_neg,num_grids=num_grids,max_depth=max_depth,
+                                                                               top_K=top_K,local_x=local_x,feature_names=feature_names,
+                                                                               feature_types=feature_types,verbose=verbose) 
     z_rules_dict = {"pos":zw_pos,
                     "thd_h":thd_h,
                     "thd_l":thd_l,
                     "p(z>=thd_h)":np.sum(z>=thd_h)/len(z),
                     "p(z<=thd_l)":np.sum(z<=thd_l)/len(z)}
-    z_rules_dict["rule_dict_higher_z"] = {}
-    z_rules_dict["rule_dict_lower_z"] = {}
+    z_rules_dict["rule_dict_higher_z"] = rule_list_higher_z
+    z_rules_dict["rule_dict_lower_z"] = rule_list_lower_z
     #print("check rules",rule_list_higher_z)
-    for p,rules in rule_list_higher_z.items():
-        print("check rules",p,rules)
-        z_rules_dict["rule_dict_higher_z"][p] = {}
-        #z_rules_dict["rule_dict_higher_z"][p] = display_rules(rules["rule"],x,y=y,target_indices=z>=thd_h,c=int(zw_pos),verbose=verbose)
-        if feature_types is not None and feature_types[int(p)] == 'int':
-            z_rules_dict["rule_dict_higher_z"][p]["rule"] = confine_int_feature_rules(rules["rule"])
-    
-    processed_rules = {"rules":[rv for r in z_rules_dict["rule_dict_higher_z"].values() for rv in r["rule"] ]}
-    
-    z_rules_dict["rule_dict_higher_z"] = display_rules(processed_rules["rules"],x,y=y,target_indices=z>=thd_h,c=int(zw_pos),verbose=verbose)
+    # for i, rules in enumerate(rule_list_higher_z):
+    #     print("check rules",rules)
+    #     z_rules_dict["rule_dict_higher_z"][i] = {}
+    #     #z_rules_dict["rule_dict_higher_z"][p] = display_rules(rules["rule"],x,y=y,target_indices=z>=thd_h,c=int(zw_pos),verbose=verbose)
 
-    for p,rules in rule_list_lower_z.items():
-        print("check rules",p,rules)
-        z_rules_dict["rule_dict_lower_z"][p] = {}
-        #z_rules_dict["rule_dict_higher_z"][p] = display_rules(rules["rule"],x,y=y,target_indices=z>=thd_h,c=int(zw_pos),verbose=verbose)
-        if feature_types is not None and feature_types[int(p)] == 'int':
-            z_rules_dict["rule_dict_lower_z"][p]["rule"] = confine_int_feature_rules(rules["rule"])
+    #     for r in rules["rules"]:
+    #         p = r[0]
+                
+    #         if feature_types is not None and feature_types[int(p)] == 'int':
+    #             z_rules_dict["rule_dict_higher_z"][i]["rule"] = confine_int_feature_rules(rules["rule"])
+        
+    # processed_rules = {"rules":[rv for r in z_rules_dict["rule_dict_higher_z"].values() for rv in r["rule"] ]}
     
-    processed_rules = {"rules":[rv for r in z_rules_dict["rule_dict_lower_z"].values() for rv in r["rule"] ]}
+    # z_rules_dict["rule_dict_higher_z"] = display_rules(processed_rules["rules"],x,y=y,target_indices=z>=thd_h,c=int(zw_pos),verbose=verbose)
+
+    # for p,rules in rule_list_lower_z.items():
+    #     print("check rules",p,rules)
+    #     z_rules_dict["rule_dict_lower_z"][p] = {}
+    #     #z_rules_dict["rule_dict_higher_z"][p] = display_rules(rules["rule"],x,y=y,target_indices=z>=thd_h,c=int(zw_pos),verbose=verbose)
+    #     if feature_types is not None and feature_types[int(p)] == 'int':
+    #         z_rules_dict["rule_dict_lower_z"][p]["rule"] = confine_int_feature_rules(rules["rule"])
     
-    z_rules_dict["rule_dict_lower_z"] = display_rules(processed_rules["rules"],x,y=y,target_indices=z<=thd_l,c=int(1-zw_pos),verbose=verbose)
+    # processed_rules = {"rules":[rv for r in z_rules_dict["rule_dict_lower_z"].values() for rv in r["rule"] ]}
+    
+    # z_rules_dict["rule_dict_lower_z"] = display_rules(processed_rules["rules"],x,y=y,target_indices=z<=thd_l,c=int(1-zw_pos),verbose=verbose)
 
     return z_rules_dict
 
@@ -669,18 +680,28 @@ def sort_rules(z_rules,input_feature_names,sort_by="cond_prob_y",pos=True,top=3)
 
         #for path,rules_dict in zr_dict[list_name].items():
             #print(path,rules_dict)
-        new_zrd = {}
-        new_r = []
-        for r in zr_dict[list_name]["rules"]:
-            new_r.append((r[0],input_feature_names[r[0]],r[1],r[2]))
-        new_zrd["rules"] = new_r
-        new_zrd['zid'] = zid
-        new_zrd[p_thd]=zr_dict[p_thd]
-        new_zrd[thd]=zr_dict[thd] 
-        for f in ['cond_prob_y','cond_prob_target','support','ratio_y']:
-            new_zrd[f] = zr_dict[list_name][f]
+        
+        
+        for rdict in zr_dict[list_name]:
+            new_zrd = {}
+            new_r = []
+            
+            for r in rdict["rules"]:
+                new_r.append((r[0],input_feature_names[r[0]],r[1],r[2]))
+            # print(r)
+            # new_r.append((r[0],input_feature_names[r[0]],r[1],r[2]))
+            if len(new_r) == 0:
+                print("no rules",zr_dict)
+                continue
+            new_zrd["rules"] = new_r
+            new_zrd['zid'] = zid
+            new_zrd[p_thd]=zr_dict[p_thd]
+            new_zrd[thd]=zr_dict[thd] 
+            new_zrd['pos'] = zr_dict['pos']
+            for f in ['cond_prob_y','cond_prob_target','support','ratio_y']:
+                new_zrd[f] = rdict[f]
 
-        sorted_rules.append(new_zrd)
+            sorted_rules.append(new_zrd)
 
             
         # new_zr.sort(key=lambda x: x[sort_by], reverse=True)
