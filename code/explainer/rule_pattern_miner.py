@@ -125,12 +125,14 @@ def search_feature_intervals(f_val,peaks,grids,ratios,supports,target_indices,pr
                 else:
                     new_prev_cond_indices = prev_cond_indices & ((f_val>=left)&(f_val<=right))
                 intervals.append((cond_ratio,left,right,sup,new_prev_cond_indices))
+                if len(intervals) >= top_K:
+                    break
     
     if len(intervals) == 0:
         return intervals
     
     intervals.sort(key=lambda x: x[0], reverse=True) 
-    return intervals[:top_K]   
+    return intervals   
 
 
 
@@ -460,8 +462,7 @@ def add_branch_to_rule_tree(parent,fids,x,target_indices,prev_cond_indices=None,
             fids_copy.insert(0,parent.fid)
             add_branch_to_rule_tree(parent,fids_copy,x,target_indices,prev_cond_indices=prev_cond_indices,grid_num=grid_num,
                                         min_support=min_support,max_depth=max_depth,top_K=top_K,local_x=local_x,verbose=verbose)
-    else:
-        print('reach max depth')
+
     return
 
 
