@@ -111,7 +111,7 @@ def search_feature_intervals(f_val,peaks,grids,ratios,supports,target_indices,pr
         cond_ratio,left,right,sup = raise_feature_interval(f_val,grids,gid,ratios=ratios,supports=supports,target_indices=target_indices,
                                                            prev_cond_indices=prev_cond_indices,min_support=min_support,verbose=verbose)     
 
-        if sup < min_support or cond_ratio < 1.:
+        if sup < min_support or cond_ratio < 1.0001:
             #print('not qualified',sup,cond_ratio)
             continue
         else:          
@@ -140,7 +140,7 @@ def add_potential_rules(x,f,target_indices,prev_cond_indices=None,num_grids=20,m
                         local_x=None,top_K=1,verbose=False):
     print("search rule for feature",f)
     f_val = x[:,int(f)]
-    grids = np.linspace(f_val.min(),f_val.max(),num_grids) 
+    grids = np.linspace(f_val[~np.isnan(f_val)].min(),f_val[~np.isnan(f_val)].max(),num_grids) 
 
     grids,ratios,supports = preprocess_empty_grids(f_val,target_indices,grids,prev_cond_indices=prev_cond_indices,verbose=verbose)
 
@@ -159,7 +159,17 @@ def add_potential_rules(x,f,target_indices,prev_cond_indices=None,num_grids=20,m
         ## check if local_x is in the candidate range
         for i in range(len(inv)-1,-1,-1):
             if lx < inv[i][1] or lx > inv[i][2]:
+                if verbose:
+                    print("local not matched",lx,inv[i][:-1])
                 del inv[i]
+        if len(inv) == 0:
+            print("no matched interval, search from local val grid")
+            tmp = np.arange(len(grids)-1)[(grids[:-1] -lx)<=0]
+            if len(tmp)>0:
+                gid = tmp[-1]
+                inv = search_feature_intervals(f_val,[gid],grids,ratios,supports,target_indices,prev_cond_indices=prev_cond_indices,
+                                    min_support=min_support,top_K=top_K,verbose=verbose)
+        
                 
     
     return inv
@@ -275,33 +285,35 @@ def merge_feature_intervals(gid,sup,f_val,grids,ratios,target_indices,prev_cond_
     old_r = ratios[gid]
     if verbose:
         print("merge_feature_intervals",gid,sup,old_r,grids[gid])
-    while old_r > 1.:
+    while old_r > 1.0001 or sup < min_support:
         
-        if left_id == 0 and right_id == len(ratios)-1:
-            break
+        # if left_id == 0 or right_id == len(ratios)-1:
+        #     break
         
-        left_id = left_id - 1
-        right_id = right_id + 1
+        new_left_id = left_id - 1
+        new_right_id = right_id + 1
+        if verbose:
+            print("check before merge ids",left_id,right_id,new_left_id,new_right_id) 
 
-        left_r = ratios[left_id] if left_id >= 0 else 0.
-        right_r = ratios[right_id] if right_id < len(ratios) else 0.
+        left_r = ratios[new_left_id] if new_left_id >= 0 else -1.
+        right_r = ratios[new_right_id] if new_right_id < len(ratios) else -1.
         
         ## merge neighbor grid with ratio larger than 1
-        if left_r >= right_r or right_id >= len(ratios):
-            merge = left_id
+        if left_r >= right_r or new_right_id >= len(ratios):
+            merge = new_left_id
             m_r = left_r
         else:
-            merge = right_id
+            merge = new_right_id
             m_r = right_r
         if verbose:
-            print("check merge ids",left_id,right_id,m_r)    
+            print("check merge ids",left_id,right_id,merge,m_r,old_r,left_r,right_r)    
         if sup >= min_support and m_r < old_r:
-            left_id = left_id + 1
-            right_id = right_id - 1
+            # left_id = left_id + 1
+            # right_id = right_id - 1
             break
         
-        left_id = max(0,left_id)
-        right_id = min(len(ratios)-1,right_id)
+        # left_id = max(0,left_id)
+        # right_id = min(len(ratios)-1,right_id)
         
         new_r,new_sup = calc_cond_ratio(f_val,grids[min(merge,left_id)],grids[max(merge,right_id)+1],
                                         target_indices,prev_cond_indices)
@@ -396,7 +408,7 @@ def gen_rule_list_for_one_target_greedy(x,fids,target_indices,y=None,c=1,min_sup
                                         local_x=None,feature_types=None,verbose=False,sort_by="cond_prob_target"):
     
     rule_tree = build_rule_tree(list(fids),x,target_indices,grid_num=num_grids,min_support=min_support,
-                                                 max_depth=max_depth,top_K=top_K,local_x=local_x)
+                                                 max_depth=max_depth,top_K=top_K,local_x=local_x,verbose=verbose)
     if rule_tree is None:
         rule_dict = {}
     else:
@@ -421,17 +433,17 @@ def gen_rule_list_for_one_target_greedy(x,fids,target_indices,y=None,c=1,min_sup
     return rule_list
 
 
-def build_rule_tree(fids,x,target_indices,grid_num=20,min_support=2000,max_depth=4,top_K=3,local_x=None):
+def build_rule_tree(fids,x,target_indices,grid_num=20,min_support=2000,max_depth=4,top_K=3,local_x=None,verbose=False):
     print("build_rule_tree")
     rule_tree = RuleTree(min_support=min_support)
-    add_branch_to_rule_tree(rule_tree.root,fids,x,target_indices,prev_cond_indices=None,grid_num=grid_num,
-                                min_support=min_support,max_depth=max_depth,top_K=top_K,local_x=local_x)
+    add_branch_to_rule_tree(rule_tree.root,fids,x,target_indices,prev_cond_indices=None,path=[],grid_num=grid_num,
+                        min_support=min_support,max_depth=max_depth,top_K=top_K,local_x=local_x,verbose=verbose)
     return rule_tree
 
 
 
 
-def add_branch_to_rule_tree(parent,fids,x,target_indices,prev_cond_indices=None,grid_num=20,
+def add_branch_to_rule_tree(parent,fids,x,target_indices,prev_cond_indices=None,path=[],grid_num=20,
                             min_support=2000,max_depth=4,top_K=3,local_x=None,verbose=False):
     fids_copy = fids.copy()
     if parent.fid != -1:
@@ -450,17 +462,22 @@ def add_branch_to_rule_tree(parent,fids,x,target_indices,prev_cond_indices=None,
                 print('no enough support,skip',sup,cond_ratio)
                 
             else:          
-                print('add rule', f, potential_rule[:-1])  
+                print('add rule',path, f, potential_rule[:-1])  
                 valid = True                  
                 new_node = RuleNode(f,parent,left,right,cond_ratio,sup)
                 parent.add_child(new_node)
-                add_branch_to_rule_tree(new_node,fids_copy,x,target_indices,prev_cond_indices=new_prev_cond_indices,grid_num=grid_num,
-                                        min_support=min_support,max_depth=max_depth,top_K=top_K,local_x=local_x,verbose=verbose)
+                path_copy = path.copy()
+                path_copy.append(f)
+                if len(path_copy) < max_depth:
+                    add_branch_to_rule_tree(new_node,fids_copy,x,target_indices,prev_cond_indices=new_prev_cond_indices,
+                                            path=path_copy,grid_num=grid_num,min_support=min_support,max_depth=max_depth,
+                                            top_K=top_K,local_x=local_x,verbose=verbose)
         if not valid:
             print('no valid rule,skip',f)
             fids_copy.remove(f)
-            fids_copy.insert(0,parent.fid)
-            add_branch_to_rule_tree(parent,fids_copy,x,target_indices,prev_cond_indices=prev_cond_indices,grid_num=grid_num,
+            if parent.fid!=-1:
+                fids_copy.insert(0,parent.fid)
+            add_branch_to_rule_tree(parent,fids_copy,x,target_indices,prev_cond_indices=prev_cond_indices,path=path,grid_num=grid_num,
                                         min_support=min_support,max_depth=max_depth,top_K=top_K,local_x=local_x,verbose=verbose)
 
     return

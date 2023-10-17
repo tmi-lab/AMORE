@@ -179,13 +179,22 @@ def explain_hidden_states_by_simplex(model,times,train_data,train_X_raw,train_df
     return test_corpus_map,hidden_input_heatmap,corpus
 
 
-def calc_baselines_intg(test_examples,model,baselines,times,n_bins=100):
+def calc_baselines_intg(test_examples,model,baselines,times,C=2,n_bins=100):
     int_g, zshift = [],[]
-    for k in range(len(baselines)):
-        int_g_k,latent_shift = integrad(test_examples=test_examples,model=model, 
-                                                      input_baseline=baselines[k],n_bins=n_bins,times=times)
-        int_g.append(int_g_k)
-        zshift.append(latent_shift)
+    cids = np.arange(C)
+    for k in cids:
+        for kk in cids[cids!=k]:
+            int_g_k,latent_shift = integrad(test_examples=test_examples[k],model=model, 
+                                                      input_baseline=baselines[kk],n_bins=n_bins,times=times)
+            int_g.append(int_g_k)
+            zshift.append(latent_shift)
+    if len(baselines) > C:
+        tsamples = torch.vstack(test_examples)
+        for k in range(C,len(baselines)):
+            int_g_k,latent_shift = integrad(test_examples=tsamples,model=model, 
+                                            input_baseline=baselines[k],n_bins=n_bins,times=times)
+            int_g.append(int_g_k)
+            zshift.append(latent_shift)
 
     int_g = torch.vstack(int_g)
     zshift = torch.vstack(zshift)
@@ -202,3 +211,74 @@ def output_intg_score(latent_int_g,linear_weights,output_shift):
     y_int_g = y_int_g.reshape(y_int_g.shape[0],-1)/output_shift.reshape(output_shift.shape[0],-1)
     
     return y_int_g
+
+def gen_intgrad_baselines(x,y,reps=None,zero_x=False,zero_z=False):
+ 
+    C = int(y.max())+1
+    baselines = []
+    if isinstance(x,torch.Tensor):
+        for c in range(C):            
+            baselines.append(x[y==c].mean(dim=0).unsqueeze(0))
+                    
+        if zero_x:
+            baselines.append(torch.zeros_like(x[0]).unsqueeze(0))
+        if zero_z:
+            reps_norm = torch.square(reps).sum(dim=[d for d in range(1,len(reps.shape))])
+            bid = torch.argmin(reps_norm)
+            baselines.append(x[bid])
+        return torch.vstack(baselines)
+    elif isinstance(x,np.ndarray):
+        for c in range(C):
+            baselines.append(x[y==c].mean(axis=0).reshape(1,-1))
+        if zero_x:
+            baselines.append(np.zeros_like(x[0]).reshape(1,-1))
+        if zero_z:
+            reps_norm = np.square(reps).sum(axis=[d for d in range(1,len(reps.shape))])
+            bid = np.argmin(reps_norm)
+            baselines.append(x[bid])
+        return np.vstack(baselines)
+    else:
+        raise TypeError('Not supported type!')
+
+
+def gen_balanced_subset(x,y,size_per_class=500,shuffle=False):
+    C = int(y.max())+1
+    subset = []
+    for c in range(C):
+        y_c = (y == c)
+        if shuffle:
+            id_c = np.random.choice(np.sum(y_c),size=size_per_class)
+            subset.append(x[y_c][id_c])
+        else:
+            if size_per_class <= np.sum(y_c):
+                subset.append(x[y_c][:size_per_class])
+            else:
+                id_c = np.arrange(np.sum(y_c))
+                id_rc = np.arrange(size_per_class-np.sum(y_c))
+                id_c = np.concatenate([id_c,id_rc])
+                subset.append(x[y_c][id_c])
+        
+#     subset = torch.vstack(subset)
+    return subset
+
+
+def find_py_threshold(p_grids,pred_y_prob,true_y,c=1,high=True):
+    max_s = 0.
+    thd = 0.
+    if high:
+        for p in p_grids:
+            tpr = (true_y[pred_y_prob>=p]==c).sum()/(pred_y_prob>=p).sum()
+            cp = (true_y[pred_y_prob>=p]==c).sum()/(true_y==c).sum()
+            f1 = (2*tpr*cp)/(tpr+cp)
+            if f1 > max_s:
+                thd = p
+                max_s = f1
+    else:
+        for p in p_grids:
+            tpr = (true_y[pred_y_prob<=p]==c).sum()/(pred_y_prob<=p).sum()
+            cp = (true_y[pred_y_prob<=p]==c).sum()/(true_y==c).sum()
+            f1 = (2*tpr*cp)/(tpr+cp)
+            if f1 > max_s:
+                thd = p
+                max_s = f1
+    return thd

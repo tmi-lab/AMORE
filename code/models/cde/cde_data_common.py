@@ -48,8 +48,11 @@ def augment_data(X,times,intensity=True,time_intensity=True,append_times=True,cu
     X_aug = []
     
     if time_intensity:
-        X_intensity = X!=0  # of size (batch, stream, channels)
-        X_intensity = X_intensity.to(X.dtype).cumsum(dim=1)
+        if X.isnan().any():
+            X_intensity = X.isnan().to(X.dtype).cumsum(dim=1)
+        else:
+            X_intensity = X!=0  # of size (batch, stream, channels)
+            X_intensity = X_intensity.to(X.dtype).cumsum(dim=1)
         X_aug.append(X_intensity)
         
     

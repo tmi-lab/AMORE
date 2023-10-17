@@ -4,10 +4,10 @@ import numpy as np
 from collections.abc import Iterator
 from sklearn.tree import export_text
 from sklearn.tree import DecisionTreeRegressor
-from .rule_pattern_miner import merge_rule, find_suport
+from .rule_pattern_miner import op_map
 
 
-def obtain_rule_lists_from_DT(dtree,max_depth,x,y,z,feature_ids,input_feature_names):
+def obtain_rule_lists_from_DT(dtree,max_depth,x,y,z,feature_ids,input_feature_names,c=1):
     tree_dict = {}
     tree_text = export_text(dtree,decimals=3)
     lines = tree_text.split('\n')
@@ -40,7 +40,9 @@ def obtain_rule_lists_from_DT(dtree,max_depth,x,y,z,feature_ids,input_feature_na
                         rule_conj.append(tree_dict[tuple(path[:i+1])])
                     rule_conj = merge_rule(rule_conj) 
                     support = find_suport(x,rule_conj)
-                    rule_support_list.append((support.sum(),np.abs(z[support].mean())/z[support].std(),(y[support]==1).sum()/support.sum()))
+                    # rule_support_list.append((support.sum(),np.abs(z[support].mean())/z[support].std(),(y[support]==1).sum()/support.sum()))
+                    rule_support_list.append((support.sum(),z[support].sum()/support.sum(),(y[support]==c).sum()/support.sum()))
+
                     rule_list.append(rule_conj)
 
 
@@ -50,20 +52,20 @@ def obtain_rule_lists_from_DT(dtree,max_depth,x,y,z,feature_ids,input_feature_na
                 if isinstance(val, Iterator):
                     val = val[0]
                 rule_value_list.append(val)
-                line = line+(' snr:'+str(rule_support_list[-1][1].round(3))+' prob:'+str(rule_support_list[-1][2].round(3)))
+                line = line+(' cond_prob_target:'+str(rule_support_list[-1][1].round(3))+' cond_prob_y:'+str(rule_support_list[-1][2].round(3)))
                 #print(line)
                 new_lines.append(line)
                 
     return rule_list, rule_value_list, rule_support_list, new_lines
 
 
-def select_rule_list(rule_support_list,snr_th=1.0,prob_low_th=0.01,prob_high_th=0.15):
+def select_rule_list(rule_support_list,prob_low_th=0.01,prob_high_th=0.15):
     rule_support1 = [r[1] for r in rule_support_list]
     rule_support2 = [r[2] for r in rule_support_list]
 
     select=[]
     for i in range(len(rule_support_list)):
-        if rule_support1[i] > snr_th and (rule_support2[i] > prob_high_th or rule_support2[i] < prob_low_th):
+        if (rule_support1[i] > prob_high_th or rule_support1[i] < prob_low_th) and (rule_support2[i] > prob_high_th or rule_support2[i] < prob_low_th):
             select.append(i)
     select = np.array(select)
             
@@ -87,3 +89,60 @@ def gen_rules_by_DTree(x,y,z,fids,input_feature_names,snr_th=0.5,prob_low_th=0.0
         for r in rule_list[s]:
             print(input_feature_names[r[0]],r[1],r[2])
     return select, dtr, new_lines
+
+def merge_rule(rule_conj):
+    r_dict = {}
+    del_list = []
+    #print('start merge',rule_conj)
+    for i,r in enumerate(rule_conj):
+        #print(i,r)
+        rid = r[0]
+        r_dict[rid] = r_dict.get(rid,None)
+        #print(rid,r_dict[rid])
+        if r_dict[rid] is None:
+            r_dict[rid] = [i]
+        else:
+            #print('found same rid',r_dict[rid],rid)
+            new_r = None
+            for jj in r_dict[rid]:
+                #print(jj,rule_conj[jj],r)
+                new_r = merge_subspace(r,rule_conj[jj])
+                if new_r is not None:
+                    ## merged to a previous subspace
+                    rule_conj[jj] = new_r
+                    #print('new',new_r)
+                    #del rule_conj[i] ## need to fix
+                    del_list.append(i)
+                    break
+                    
+            if new_r is None:
+                r_dict[rid].append(i)
+    if len(del_list)>0:
+         rule_conj = [r for i, r in enumerate(rule_conj) if i not in del_list]
+    #print('after merge',rule_conj)                
+    return rule_conj
+
+def merge_subspace(r1,r2):
+    assert(r1[0]==r2[0])
+    if '>' in r1[1] and '>' in r2[1]:
+        a = np.argmax([r1[2],r2[2]])
+        
+    elif '<' in r1[1] and '<' in r2[1]:
+        a = np.argmin([r1[2],r2[2]]) 
+    elif r1[1] == r2[1] and r1[2] == r2[2]:
+        return r2
+    else:
+        return None
+    
+    return r1 if a==0 else r2
+
+
+def find_suport(X,rule_conj):
+    indices = np.ones(X.shape[0]).astype(bool)
+    for r in rule_conj:
+        indices = indices & find_support_one_rule(X,r)
+    return indices
+
+def find_support_one_rule(X,rule):
+    fid = rule[0]
+    return op_map[rule[1]](X[...,fid],rule[2])
