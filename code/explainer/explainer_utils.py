@@ -179,19 +179,28 @@ def explain_hidden_states_by_simplex(model,times,train_data,train_X_raw,train_df
     return test_corpus_map,hidden_input_heatmap,corpus
 
 
-def calc_baselines_intg(test_examples,model,baselines,times,C=2,n_bins=100):
+def calc_baselines_intg(test_examples,model,baselines,times=None,C=2,n_bins=100):
     int_g, zshift = [],[]
     cids = np.arange(C)
     for k in cids:
         for kk in cids[cids!=k]:
-            int_g_k,latent_shift = integrad(test_examples=test_examples[k],model=model, 
+            if times is None:
+                int_g_k,latent_shift = integrad(test_examples=test_examples[k],model=model, 
+                                                      input_baseline=baselines[kk],n_bins=n_bins)
+            else:
+                int_g_k,latent_shift = integrad(test_examples=test_examples[k],model=model, 
                                                       input_baseline=baselines[kk],n_bins=n_bins,times=times)
             int_g.append(int_g_k)
             zshift.append(latent_shift)
     if len(baselines) > C:
         tsamples = torch.vstack(test_examples)
         for k in range(C,len(baselines)):
-            int_g_k,latent_shift = integrad(test_examples=tsamples,model=model, 
+            if times is None:
+                int_g_k,latent_shift = integrad(test_examples=tsamples,model=model, 
+                                            input_baseline=baselines[k],n_bins=n_bins)
+
+            else:
+                int_g_k,latent_shift = integrad(test_examples=tsamples,model=model, 
                                             input_baseline=baselines[k],n_bins=n_bins,times=times)
             int_g.append(int_g_k)
             zshift.append(latent_shift)
@@ -246,6 +255,8 @@ def gen_balanced_subset(x,y,size_per_class=500,shuffle=False):
     subset = []
     for c in range(C):
         y_c = (y == c)
+        if isinstance(y_c,torch.Tensor):
+            y_c = y_c.numpy()
         if shuffle:
             id_c = np.random.choice(np.sum(y_c),size=size_per_class)
             subset.append(x[y_c][id_c])
