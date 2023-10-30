@@ -404,11 +404,11 @@ def find_top_pattern_for_one_target(x,y,target_indices,itemsets,c=1,num_grids=20
     return processed_rules
 
 
-def gen_rule_list_for_one_target_greedy(x,fids,target_indices,y=None,c=1,min_support=500,num_grids=20,max_depth=5,top_K=3,
-                                        local_x=None,feature_types=None,verbose=False,sort_by="cond_prob_target"):
+def gen_rule_list_for_one_target(x,fids,target_indices,y=None,c=1,min_support=500,num_grids=20,max_depth=5,top_K=3,
+                                        local_x=None,feature_types=None,search="ordered",verbose=False,sort_by="cond_prob_target"):
     
     rule_tree = build_rule_tree(list(fids),x,target_indices,grid_num=num_grids,min_support=min_support,
-                                                 max_depth=max_depth,top_K=top_K,local_x=local_x,verbose=verbose)
+                                max_depth=max_depth,top_K=top_K,local_x=local_x,search=search,verbose=verbose)
     if rule_tree is None:
         rule_dict = {}
     else:
@@ -433,27 +433,49 @@ def gen_rule_list_for_one_target_greedy(x,fids,target_indices,y=None,c=1,min_sup
     return rule_list
 
 
-def build_rule_tree(fids,x,target_indices,grid_num=20,min_support=2000,max_depth=4,top_K=3,local_x=None,verbose=False):
+
+def build_rule_tree(fids,x,target_indices,grid_num=20,min_support=2000,max_depth=4,top_K=3,local_x=None,search="ordered",verbose=False):
     print("build_rule_tree")
     rule_tree = RuleTree(min_support=min_support)
     add_branch_to_rule_tree(rule_tree.root,fids,x,target_indices,prev_cond_indices=None,path=[],grid_num=grid_num,
-                        min_support=min_support,max_depth=max_depth,top_K=top_K,local_x=local_x,verbose=verbose)
+                        min_support=min_support,max_depth=max_depth,top_K=top_K,local_x=local_x,search=search,verbose=verbose)
     return rule_tree
 
 
 
 
 def add_branch_to_rule_tree(parent,fids,x,target_indices,prev_cond_indices=None,path=[],grid_num=20,
-                            min_support=2000,max_depth=4,top_K=3,local_x=None,verbose=False):
+                            min_support=2000,max_depth=4,top_K=3,local_x=None,search="ordered",verbose=False):
     fids_copy = fids.copy()
     if parent.fid != -1:
         fids_copy.remove(parent.fid)
     if len(fids_copy)>0:
-        f = fids_copy[0]
-        potential_rules = add_potential_rules(x,f,target_indices,prev_cond_indices=prev_cond_indices,num_grids=grid_num,
-                                              min_support=min_support,top_K=top_K,local_x=local_x,verbose=verbose)        
- 
-        
+        if search == "ordered":
+            f = fids_copy[0]
+            potential_rules = add_potential_rules(x,f,target_indices,prev_cond_indices=prev_cond_indices,num_grids=grid_num,
+                                                min_support=min_support,top_K=top_K,local_x=local_x,verbose=verbose)
+        if search == "greedy":
+            best_f = fids_copy[0]
+            best_potential_rules = []
+            best_r = 0.
+            for f in fids_copy:
+                # f = fids_copy[0]
+                potential_rules = add_potential_rules(x,f,target_indices,prev_cond_indices=prev_cond_indices,num_grids=grid_num,
+                                                min_support=min_support,top_K=top_K,local_x=local_x,verbose=verbose) 
+                if len(potential_rules) == 0:
+                    continue
+                if best_r < potential_rules[0][0]:
+                    best_r = potential_rules[0][0]
+                    best_f = f
+                    best_potential_rules = potential_rules   
+                        
+            print('best rule',best_f,best_r)
+            f = best_f
+            potential_rules = best_potential_rules
+            
+            if best_r<=1.0001:
+                return
+            
         valid = False     
         for potential_rule in potential_rules:
             cond_ratio, left, right, sup, new_prev_cond_indices = potential_rule
@@ -471,21 +493,21 @@ def add_branch_to_rule_tree(parent,fids,x,target_indices,prev_cond_indices=None,
                 if len(path_copy) < max_depth:
                     add_branch_to_rule_tree(new_node,fids_copy,x,target_indices,prev_cond_indices=new_prev_cond_indices,
                                             path=path_copy,grid_num=grid_num,min_support=min_support,max_depth=max_depth,
-                                            top_K=top_K,local_x=local_x,verbose=verbose)
+                                            top_K=top_K,local_x=local_x,search=search,verbose=verbose)
         if not valid:
             print('no valid rule,skip',f)
             fids_copy.remove(f)
             if parent.fid!=-1:
                 fids_copy.insert(0,parent.fid)
             add_branch_to_rule_tree(parent,fids_copy,x,target_indices,prev_cond_indices=prev_cond_indices,path=path,grid_num=grid_num,
-                                        min_support=min_support,max_depth=max_depth,top_K=top_K,local_x=local_x,verbose=verbose)
+                                    min_support=min_support,max_depth=max_depth,top_K=top_K,local_x=local_x,search=search,verbose=verbose)
 
     return
 
 
     
 def gen_rule_lists_for_one_latent_state(x,z,itemsets_z,zw_pos,thd_h,thd_l,y=None,min_support_pos=500,min_support_neg=2000,
-                                    num_grids=20,max_depth=5,local_x=None,top_K=3,feature_types=None,feature_names=None,verbose=False):
+                                    num_grids=20,max_depth=5,local_x=None,top_K=3,feature_types=None,search="ordered",verbose=False):
     comb_z = gen_freq_feature_set(itemsets_z,min_support=min(min_support_pos,min_support_neg),max_len=max_depth)
     comb_z = np.array(comb_z).astype(int)-1
     print('feature set',comb_z)
@@ -493,10 +515,10 @@ def gen_rule_lists_for_one_latent_state(x,z,itemsets_z,zw_pos,thd_h,thd_l,y=None
     min_support_l = min_support_neg if zw_pos else min_support_pos
 
 
-    rule_dict_higher_z = gen_rule_list_for_one_target_greedy(x,comb_z,z>=thd_h,y=y,c=int(zw_pos),min_support=min_support_h,num_grids=num_grids,max_depth=max_depth,
-                                                             top_K=top_K,local_x=local_x,feature_types=feature_types,verbose=verbose)
-    rule_dict_lower_z = gen_rule_list_for_one_target_greedy(x,comb_z,z<=thd_l,y=y,c=int(1-zw_pos),min_support=min_support_l,num_grids=num_grids,max_depth=max_depth,
-                                                             top_K=top_K,local_x=local_x,feature_types=feature_types,verbose=verbose)
+    rule_dict_higher_z = gen_rule_list_for_one_target(x,comb_z,z>=thd_h,y=y,c=int(zw_pos),min_support=min_support_h,num_grids=num_grids,max_depth=max_depth,
+                                                             top_K=top_K,local_x=local_x,feature_types=feature_types,search=search,verbose=verbose)
+    rule_dict_lower_z = gen_rule_list_for_one_target(x,comb_z,z<=thd_l,y=y,c=int(1-zw_pos),min_support=min_support_l,num_grids=num_grids,max_depth=max_depth,
+                                                             top_K=top_K,local_x=local_x,feature_types=feature_types,search=search,verbose=verbose)
     
     return rule_dict_higher_z,rule_dict_lower_z
 

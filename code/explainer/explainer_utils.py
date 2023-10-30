@@ -179,29 +179,30 @@ def explain_hidden_states_by_simplex(model,times,train_data,train_X_raw,train_df
     return test_corpus_map,hidden_input_heatmap,corpus
 
 
-def calc_baselines_intg(test_examples,model,baselines,times=None,C=2,n_bins=100):
+def calc_baselines_intg(test_examples,model,baselines,times=None,C=2,target_dim=0,n_bins=100):
     int_g, zshift = [],[]
     cids = np.arange(C)
-    for k in cids:
-        for kk in cids[cids!=k]:
-            if times is None:
-                int_g_k,latent_shift = integrad(test_examples=test_examples[k],model=model, 
-                                                      input_baseline=baselines[kk],n_bins=n_bins)
-            else:
-                int_g_k,latent_shift = integrad(test_examples=test_examples[k],model=model, 
-                                                      input_baseline=baselines[kk],n_bins=n_bins,times=times)
-            int_g.append(int_g_k)
-            zshift.append(latent_shift)
+    # for k in cids:
+    k = target_dim
+    for kk in cids[cids!=k]:
+        if times is None:
+            int_g_k,latent_shift = integrad(test_examples=test_examples[k],model=model, 
+                                                    input_baseline=baselines[kk],target_dim=target_dim,n_bins=n_bins)
+        else:
+            int_g_k,latent_shift = integrad(test_examples=test_examples[k],model=model, 
+                                                    input_baseline=baselines[kk],target_dim=target_dim,n_bins=n_bins,times=times)
+        int_g.append(int_g_k)
+        zshift.append(latent_shift)
     if len(baselines) > C:
         tsamples = torch.vstack(test_examples)
-        for k in range(C,len(baselines)):
+        for kk in range(C,len(baselines)):
             if times is None:
                 int_g_k,latent_shift = integrad(test_examples=tsamples,model=model, 
-                                            input_baseline=baselines[k],n_bins=n_bins)
+                                            input_baseline=baselines[kk],target_dim=target_dim,n_bins=n_bins)
 
             else:
                 int_g_k,latent_shift = integrad(test_examples=tsamples,model=model, 
-                                            input_baseline=baselines[k],n_bins=n_bins,times=times)
+                                            input_baseline=baselines[kk],target_dim=target_dim,n_bins=n_bins,times=times)
             int_g.append(int_g_k)
             zshift.append(latent_shift)
 
@@ -264,8 +265,8 @@ def gen_balanced_subset(x,y,size_per_class=500,shuffle=False):
             if size_per_class <= np.sum(y_c):
                 subset.append(x[y_c][:size_per_class])
             else:
-                id_c = np.arrange(np.sum(y_c))
-                id_rc = np.arrange(size_per_class-np.sum(y_c))
+                id_c = np.arange(np.sum(y_c))
+                id_rc = np.arange(size_per_class-np.sum(y_c))
                 id_c = np.concatenate([id_c,id_rc])
                 subset.append(x[y_c][id_c])
         

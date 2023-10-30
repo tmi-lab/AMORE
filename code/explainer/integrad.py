@@ -5,14 +5,23 @@ import torch
 import torch.nn.functional as F
 
 
- 
-    
+# function to extract grad
+def set_grad(var):
+    def hook(grad):
+        print("grad shape",grad.shape,var.grad.shape )
+        var.grad += grad
+    return hook
+
+class Var:
+    def __init__(self,initial_value):
+        self.grad = initial_value
 
 def integrad(
         test_examples,
         model,
         input_baseline: torch.Tensor,
         n_bins: int = 100,
+        target_dim: int = 0,
         **kwargs
     ) -> torch.Tensor:
         """
@@ -45,14 +54,27 @@ def integrad(
             #integrated_grads = torch.einsum('bij,bijk->bijk',torch.abs(1./latent_shift),integrated_grads)
             integrated_grads[torch.isnan(integrated_grads)] = 0.
         else: 
-            latent_shift_sqrdnorm = torch.sum(latent_shift**2, dim=-1, keepdim=True)
+            # latent_shift_sqrdnorm = torch.sum(latent_shift**2, dim=-1, keepdim=True)
             for n in range(1, n_bins + 1):
                 t = n / n_bins
                 input = input_baseline + t * (test_inputs - input_baseline)
                 latent_reps = model.latent_representation(input,**kwargs)              
-                latent_reps.backward(gradient=latent_shift / latent_shift_sqrdnorm)
+                # latent_reps.backward(gradient=latent_shift / latent_shift_sqrdnorm)
+                latent_reps = latent_reps.reshape(latent_reps.shape[0],-1)
+                e = latent_reps[:,target_dim]
+                # print("check grad",e.shape,latent_reps.shape)
+                e.backward(gradient=torch.ones_like(e))
+                # input_grad_n = torch.zeros([test_inputs.shape[0],latent_reps.shape[-1],*test_inputs.shape[1:]])
+
+                # for ii,e in enumerate(latent_reps):
+                #     e.backward(retain_graph=True)
+                #     input_grad_n[:,ii,...] = test_inputs.grad
+                #     test_inputs.grad.data.zero_()
+                
                 input_grad += test_inputs.grad
+                # print("input_grad",input_grad.shape)
                 test_inputs.grad.data.zero_()
+                
             integrated_grads = input_shift * input_grad / n_bins
 
         return integrated_grads.detach(),latent_shift
