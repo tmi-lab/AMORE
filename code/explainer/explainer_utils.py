@@ -179,11 +179,11 @@ def explain_hidden_states_by_simplex(model,times,train_data,train_X_raw,train_df
     return test_corpus_map,hidden_input_heatmap,corpus
 
 
-def calc_baselines_intg(test_examples,model,baselines,times=None,C=2,target_dim=0,n_bins=100):
+def calc_baselines_intg(test_examples,model,baselines,times=None,C=2,target_c=-1,target_dim=0,n_bins=100):
     int_g, zshift = [],[]
     cids = np.arange(C)
     # for k in cids:
-    k = target_dim
+    k = target_c if target_c >= 0 else target_dim
     for kk in cids[cids!=k]:
         if times is None:
             int_g_k,latent_shift = integrad(test_examples=test_examples[k],model=model, 

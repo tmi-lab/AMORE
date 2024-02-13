@@ -143,7 +143,7 @@ def add_potential_rules(x,f,target_indices,prev_cond_indices=None,num_grids=20,m
     grids = np.linspace(f_val[~np.isnan(f_val)].min(),f_val[~np.isnan(f_val)].max(),num_grids) 
 
     grids,ratios,supports = preprocess_empty_grids(f_val,target_indices,grids,prev_cond_indices=prev_cond_indices,verbose=verbose)
-
+    
     lx = None
     if local_x is not None:
         if isinstance(local_x,torch.Tensor):
@@ -443,10 +443,10 @@ def build_rule_tree(fids,x,target_indices,grid_num=20,min_support=2000,max_depth
 
 
 
-
 def add_branch_to_rule_tree(parent,fids,x,target_indices,prev_cond_indices=None,path=[],grid_num=20,
-                            min_support=2000,max_depth=4,top_K=3,local_x=None,search="ordered",verbose=False):
+                            min_support=2000,max_depth=4,top_K=3,local_x=None,search="greedy",verbose=False):
     fids_copy = fids.copy()
+    r_limit = 1.0001
     if parent.fid != -1:
         fids_copy.remove(parent.fid)
     if len(fids_copy)>0:
@@ -454,34 +454,44 @@ def add_branch_to_rule_tree(parent,fids,x,target_indices,prev_cond_indices=None,
             f = fids_copy[0]
             potential_rules = add_potential_rules(x,f,target_indices,prev_cond_indices=prev_cond_indices,num_grids=grid_num,
                                                 min_support=min_support,top_K=top_K,local_x=local_x,verbose=verbose)
+           
+            best_potential_rules = [[potential_rules[k][0],f, potential_rules[k]] for k in range(len(potential_rules))]
+            
+            
         if search == "greedy":
-            best_f = fids_copy[0]
-            best_potential_rules = []
-            best_r = 0.
+            # initialize top_K best rules with the lower ratio limit   
+            best_potential_rules = [[r_limit,fids_copy[0],None]]*top_K
             for f in fids_copy:
-                # f = fids_copy[0]
                 potential_rules = add_potential_rules(x,f,target_indices,prev_cond_indices=prev_cond_indices,num_grids=grid_num,
                                                 min_support=min_support,top_K=top_K,local_x=local_x,verbose=verbose) 
                 if len(potential_rules) == 0:
                     continue
-                if best_r < potential_rules[0][0]:
-                    best_r = potential_rules[0][0]
-                    best_f = f
-                    best_potential_rules = potential_rules   
+                for k in range(len(potential_rules)):
+                    
+                    if potential_rules[k][0] <= best_potential_rules[-1][0]:
+                        break
+                    # replace the worst rule with the new rule if the new rule is better
+                    if potential_rules[k][0] > best_potential_rules[-1][0]:
+                        best_potential_rules[-1] = [potential_rules[k][0],f,potential_rules[k]]
+                        # sort the best rules again to keep the worst one at the end
+                        best_potential_rules.sort(key=lambda x: x[0], reverse=True)
+                        break
                         
-            print('best rule',best_f,best_r)
-            f = best_f
-            potential_rules = best_potential_rules
+            print('best rule',best_potential_rules)
             
-            if best_r<=1.0001:
+            if best_potential_rules[0][0]<=r_limit:
+                # nothing to add, just return
                 return
             
         valid = False     
-        for potential_rule in potential_rules:
-            cond_ratio, left, right, sup, new_prev_cond_indices = potential_rule
+        for k, potential_rule in enumerate(best_potential_rules):
+            if potential_rule[0] == r_limit:
+                break
+            f = potential_rule[1]
+            cond_ratio, left, right, sup, new_prev_cond_indices = potential_rule[-1]
             print('check potential rule',f,cond_ratio,left,right,sup)
-            if sup < min_support or cond_ratio <= 1.:
-                print('no enough support,skip',sup,cond_ratio)
+            if sup < min_support or cond_ratio <= r_limit:
+                print('no enough support or ratio,skip',sup,cond_ratio)
                 
             else:          
                 print('add rule',path, f, potential_rule[:-1])  
@@ -494,7 +504,7 @@ def add_branch_to_rule_tree(parent,fids,x,target_indices,prev_cond_indices=None,
                     add_branch_to_rule_tree(new_node,fids_copy,x,target_indices,prev_cond_indices=new_prev_cond_indices,
                                             path=path_copy,grid_num=grid_num,min_support=min_support,max_depth=max_depth,
                                             top_K=top_K,local_x=local_x,search=search,verbose=verbose)
-        if not valid:
+        if not valid and search == "ordered":
             print('no valid rule,skip',f)
             fids_copy.remove(f)
             if parent.fid!=-1:
@@ -503,6 +513,7 @@ def add_branch_to_rule_tree(parent,fids,x,target_indices,prev_cond_indices=None,
                                     min_support=min_support,max_depth=max_depth,top_K=top_K,local_x=local_x,search=search,verbose=verbose)
 
     return
+
 
 
     
