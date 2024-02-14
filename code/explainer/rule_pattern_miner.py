@@ -278,14 +278,17 @@ def raise_feature_interval(f_val,grids,gid,ratios,supports,target_indices,prev_c
     return ratio,grids[left_id],grids[right_id],sup
 
 
-def merge_feature_intervals(gid,sup,f_val,grids,ratios,target_indices,prev_cond_indices=None,min_support=2000,verbose=False):
+def merge_feature_intervals(gid,sup,f_val,grids,ratios,target_indices,
+                            prev_cond_indices=None,min_support=2000,
+                            verbose=False):
     
     left_id = gid
     right_id = gid
     old_r = ratios[gid]
+    r_limit = 1.0001
     if verbose:
         print("merge_feature_intervals",gid,sup,old_r,grids[gid])
-    while old_r > 1.0001 or sup < min_support:
+    while old_r > r_limit or sup < min_support:
         
         # if left_id == 0 or right_id == len(ratios)-1:
         #     break
@@ -343,9 +346,12 @@ def display_rules(rules,x,target_indices,y=None,c=-1,verbose=False,ftypes=None):
         #     rules[k] = (r[0],r[1],rv)
         #     print("rule int",rules[k])
     h_cond_prob_z,h_cond_prob_y, h_ratio_y,h_sup = target_prob_with_rules(rules,x,zids=target_indices,y=y,c=c,verbose=verbose) 
+    fitness = (2.*h_cond_prob_z - 1.)*h_sup/np.sum(target_indices)
+    
     ret = {"rules":rules,
             "cond_prob_target":h_cond_prob_z,
-            "support":h_sup}
+            "support":h_sup,
+            "fitness":fitness}
     if y is not None:
         ret["cond_prob_y"] = h_cond_prob_y
         ret["ratio_y"] = h_ratio_y
