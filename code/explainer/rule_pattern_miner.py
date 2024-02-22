@@ -138,7 +138,8 @@ def search_feature_intervals(f_val,peaks,grids,ratios,supports,target_indices,pr
 
 def add_potential_rules(x,f,target_indices,prev_cond_indices=None,num_grids=20,min_support=2000,
                         local_x=None,top_K=1,verbose=False):
-    print("search rule for feature",f)
+    if verbose:
+        print("search rule for feature",f)
     f_val = x[:,int(f)]
     grids = np.linspace(f_val[~np.isnan(f_val)].min(),f_val[~np.isnan(f_val)].max(),num_grids) 
 
@@ -163,7 +164,8 @@ def add_potential_rules(x,f,target_indices,prev_cond_indices=None,num_grids=20,m
                     print("local not matched",lx,inv[i][:-1])
                 del inv[i]
         if len(inv) == 0:
-            print("no matched interval, search from local val grid")
+            if verbose: 
+                print("no matched interval, search from local val grid")
             tmp = np.arange(len(grids)-1)[(grids[:-1] -lx)<=0]
             if len(tmp)>0:
                 gid = tmp[-1]
@@ -482,8 +484,8 @@ def add_branch_to_rule_tree(parent,fids,x,target_indices,prev_cond_indices=None,
                         # sort the best rules again to keep the worst one at the end
                         best_potential_rules.sort(key=lambda x: x[0], reverse=True)
                         break
-                        
-            print('best rule',best_potential_rules)
+            if verbose:            
+                print('best rule',best_potential_rules)
             
             if best_potential_rules[0][0]<=r_limit:
                 # nothing to add, just return
