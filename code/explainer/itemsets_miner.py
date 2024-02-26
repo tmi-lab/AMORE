@@ -34,7 +34,7 @@ def gen_itemsets(masked_indices,K=48):
     return itemsets
 
 
-def transform_intgrad_to_itemsets(int_j,thd=0.1,K=48):
+def transform_intgrad_to_itemsets(int_j,thd=0.1,K=1):
     num_features = int_j.shape[-1]
     
     indices = np.arange(1,num_features+1)#(np.arange(1,num_features+1).reshape(1,1,1,-1)*np.ones_like(int_j))

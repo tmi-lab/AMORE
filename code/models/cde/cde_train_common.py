@@ -306,7 +306,7 @@ def main(name, times, train_dataloader, val_dataloader, test_dataloader, device,
     num = 0
     if name is not None:
         num = _save_results(name, result,rpath,model=model.to('cpu'))
-    return result,num
+    return model,result,num
 
 
 def make_model(name, input_channels, output_channels, hidden_channels, hidden_hidden_channels, num_hidden_layers,
