@@ -3,11 +3,11 @@ import ast
 import numpy as np
 from collections.abc import Iterator
 from sklearn.tree import export_text
-from sklearn.tree import DecisionTreeRegressor
+from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 from .rule_pattern_miner import op_map
 
 
-def obtain_rule_lists_from_DT(dtree,max_depth,x,y,z,feature_ids,input_feature_names,c=1):
+def obtain_rule_lists_from_DT(dtree,x,y,z,feature_ids,input_feature_names,c=1,max_depth=5):
     tree_dict = {}
     tree_text = export_text(dtree,decimals=3)
     lines = tree_text.split('\n')
@@ -20,7 +20,6 @@ def obtain_rule_lists_from_DT(dtree,max_depth,x,y,z,feature_ids,input_feature_na
         description = line.strip().split('|')
         depth = len(description)-1
         description = description[-1].split(' ')[1:]
-    
         for i,ds in enumerate(description):
 
             if 'feature' in ds:
@@ -41,18 +40,21 @@ def obtain_rule_lists_from_DT(dtree,max_depth,x,y,z,feature_ids,input_feature_na
                     rule_conj = merge_rule(rule_conj) 
                     support = find_suport(x,rule_conj)
                     # rule_metric_list.append((support.sum(),np.abs(z[support].mean())/z[support].std(),(y[support]==1).sum()/support.sum()))
-                    rule_metric_list.append((support.sum(),z[support].sum()/support.sum(),(y[support]==c).sum()/support.sum(),(2*z[support].sum()-support.sum())/z.sum()))
+                    rule_metric_list.append((support.sum(),z[support].sum()/support.sum(),(y[support]==c).sum()/support.sum(),(2.*z[support].sum()-support.sum())/z.sum()))
 
                     rule_list.append(rule_conj)
 
 
             if 'value' in ds or 'class' in ds:
+                if len(rule_list)==0:
+                    continue
                 
                 val = ast.literal_eval(description[-1])
                 if isinstance(val, Iterator):
                     val = val[0]
                 rule_value_list.append(val)
-                line = line+(' cond_prob_target:'+str(rule_metric_list[-1][1].round(3))+' cond_prob_y:'+str(rule_metric_list[-1][2].round(3))
+                
+                line = line+(' confidence:'+str(rule_metric_list[-1][1].round(3))+' cond_prob_y:'+str(rule_metric_list[-1][2].round(3))
                              +' fitness:'+str(rule_metric_list[-1][3].round(3)))
                 #print(line)
                 new_lines.append(line)
@@ -81,7 +83,7 @@ def display_rules_from_DT(rule_list,rule_metric_list,input_feature_names):
         select[2].append(rule_metric_list[s])
         print('#################')
         print(rule_list[s])
-        print('cond_prob_target',rule_metric_list[s][1].round(3),'cond_prob_y',rule_metric_list[s][2].round(3),
+        print('confidence',rule_metric_list[s][1].round(3),'cond_prob_y',rule_metric_list[s][2].round(3),
               'support',rule_metric_list[s][0],'fitness',rule_metric_list[s][3].round(3))
         for r in rule_list[s]:
             print(input_feature_names[r[0]],r[1],r[2])
@@ -92,7 +94,7 @@ def gen_rules_by_DTree(x,y,z,fids,input_feature_names,snr_th=0.5,prob_low_th=0.0
     dtr = DecisionTreeRegressor(criterion='absolute_error',min_samples_leaf=min_samples_leaf,max_depth=max_depth)
     dtr.fit(x[:,fids],y=z)
     
-    rule_list, rule_value_list, rule_metric_list, new_lines = obtain_rule_lists_from_DT(dtr,max_depth,x,y,z,fids,input_feature_names)
+    rule_list, rule_value_list, rule_metric_list, new_lines = obtain_rule_lists_from_DT(dtr,x,y,z,fids,input_feature_names,max_depth=max_depth)
     selected_ids = select_rule_list(rule_metric_list,snr_th=snr_th,prob_low_th=prob_low_th,prob_high_th=prob_high_th)
     select = [[],[],[]]
     for s in selected_ids:
@@ -162,3 +164,41 @@ def find_suport(X,rule_conj):
 def find_support_one_rule(X,rule):
     fid = rule[0]
     return op_map[rule[1]](X[...,fid],rule[2])
+
+
+def param_grid_search_for_DT(criteria,support_range,weight_options,X,y,target_indices,c=1,max_depth=1,feature_names=None,confidence_lower_bound=0.5,seed=42):
+    best_rule_set,best_configs = None,None
+    best_fitness = 0.
+    config_metric_records = {}
+    for criterion in criteria:
+        for j,cw in enumerate(weight_options):
+            wname = "uniform" if j==0 else "balanced"
+            config_metric_records[(criterion,wname)]={"min_supports":support_range}
+            top_confidence_records,top_fitness_records, actual_supports = [],[],[]
+            for min_support in support_range:
+            
+                treemodel = DecisionTreeClassifier(max_depth=max_depth,min_samples_leaf=min_support,random_state=seed,criterion=criterion,class_weight=cw)
+                treemodel.fit(X,target_indices)
+                # print(export_text(treemodel))
+                rule_list, rule_value_list, rule_metric_list, new_lines = obtain_rule_lists_from_DT(treemodel,X,y,target_indices,np.arange(X.shape[-1]),feature_names,c=c)
+                if len(rule_list)==0:
+                    continue
+                top_id = np.argmax([r[-1] for r in rule_metric_list])
+                top_fitness = rule_metric_list[top_id][-1]
+                top_confidence = rule_metric_list[top_id][1]
+
+                top_confidence_records.append(top_confidence)
+                top_fitness_records.append(top_fitness)
+                actual_supports.append(rule_metric_list[top_id][0])
+                if top_confidence >= confidence_lower_bound and top_fitness > best_fitness:
+                    best_rule_set = (rule_list[top_id],rule_metric_list[top_id])
+                    best_fitness = top_fitness
+                    best_configs = {"criterion":criterion,"min_support":min_support,"class_weight":cw}  
+            config_metric_records[(criterion,wname)]["top_confidence_records"]=top_confidence_records
+            config_metric_records[(criterion,wname)]["top_fitness_records"]=top_fitness_records
+            config_metric_records[(criterion,wname)]["actual_support"]=actual_supports
+    if best_rule_set is not None:
+        DT_best_rule_set = {"rules":best_rule_set[0],"support":best_rule_set[1][0],"fitness":best_rule_set[1][-1],"confidence":best_rule_set[1][1]}
+    else:
+        DT_best_rule_set = None
+    return DT_best_rule_set, best_configs, config_metric_records

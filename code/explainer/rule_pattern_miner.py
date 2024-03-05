@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import operator
+from sklearn.preprocessing import KBinsDiscretizer
 
 
 op_map = {'>=':operator.ge,'>':operator.gt,'<=':operator.le,'<':operator.lt,'==':operator.eq}
@@ -16,6 +17,20 @@ def scan_feature_cond_prob_ratio(f_val,z_indices,grids,prev_cond_indices=None):
     for i in range(len(grids)-1):
         left = grids[i]
         right = grids[i+1]
+        rt,sup = calc_cond_ratio(f_val,left,right,z_indices,prev_cond_indices)
+        supports[i] = sup
+        ratios[i] = rt
+
+    return ratios,supports
+
+
+def scan_cat_feature_cond_prob_ratio(f_val,z_indices,prev_cond_indices=None):
+    cats = np.unique(f_val)
+    ratios = np.zeros(len(cats))
+    supports = np.zeros(len(ratios))
+    for i in range(len(ratios)):
+        left = cats[i]
+        right = cats[i]
         rt,sup = calc_cond_ratio(f_val,left,right,z_indices,prev_cond_indices)
         supports[i] = sup
         ratios[i] = rt
@@ -42,21 +57,7 @@ def calc_cond_ratio(f_val,left_val,right_val,z_indices,prev_cond_indices=None):
     return ratio,support
 
 
-def gen_top_rule_dict_for_one_target(x,fids,target_indices,min_support=500,num_grids=20,max_depth=5,local_x=None,verbose=False):
-    
-    fids_copy = list(fids).copy()
-    prev_cond_indices = None
-    rule_dict = {}
 
-    for f in fids_copy:
-        ratio,left,right,sup,prev_cond_indices = add_top_rule(x,f,target_indices,prev_cond_indices=prev_cond_indices,num_grids=num_grids,
-                        min_support=min_support,max_depth=max_depth,local_x=local_x,verbose=verbose)
-        if ratio <= 1.:
-            continue
-        rule_dict[f] = {"rule":[(f,">=",left),(f,"<=",right)],"support":(ratio,sup)}
-        print('add rule',rule_dict[f])
-    
-    return rule_dict
 
 
 def remove_duplicate_rules(rules_dict):
@@ -85,31 +86,14 @@ def remove_duplicate_rules(rules_dict):
     return rules_dict
 
 
-def add_top_rule(x,f,target_indices,prev_cond_indices=None,num_grids=20,
-                            min_support=2000,max_depth=4,local_x=None,verbose=False):        
-    op_ratio = 0.
-    op_left = 0.
-    op_right = 0.
-    op_sup = 0.
-    new_prev_cond_indices = prev_cond_indices
-    
-    inv = add_potential_rules(x,f,target_indices,prev_cond_indices=prev_cond_indices,num_grids=num_grids,min_support=min_support,
-                                local_x=local_x,top_K=1,verbose=verbose)
-    if inv is not None:
-        op_ratio,op_left,op_right,op_sup,new_prev_cond_indices = inv[0]
-                   
-    # if local_x is not None:
-    #     print("check local",lx,op_left,op_right)
-                
-    return op_ratio,op_left,op_right,op_sup, new_prev_cond_indices
 
 
 
-def search_feature_intervals(f_val,peaks,grids,ratios,supports,target_indices,prev_cond_indices=None,min_support=2000,top_K=1,verbose=False):
+def search_feature_intervals(f_val,peaks,grids,ratios,supports,target_indices,prev_cond_indices=None,min_support=2000,top_K=1,local=False,verbose=False):
     intervals = []
     for gid in peaks:        
         cond_ratio,left,right,sup = raise_feature_interval(f_val,grids,gid,ratios=ratios,supports=supports,target_indices=target_indices,
-                                                           prev_cond_indices=prev_cond_indices,min_support=min_support,verbose=verbose)     
+                                                           prev_cond_indices=prev_cond_indices,min_support=min_support,local=local,verbose=verbose)     
 
         if sup < min_support or cond_ratio < 1.0001:
             #print('not qualified',sup,cond_ratio)
@@ -136,12 +120,41 @@ def search_feature_intervals(f_val,peaks,grids,ratios,supports,target_indices,pr
 
 
 
-def add_potential_rules(x,f,target_indices,prev_cond_indices=None,num_grids=20,min_support=2000,
+def add_potential_rules_for_categorical_feature(x,f,target_indices,prev_cond_indices=None,min_support=2000,
                         local_x=None,top_K=1,verbose=False):
-    if verbose:
-        print("search rule for feature",f)
+    cats = np.unique(x[:,int(f)])
+    ratios,supports = scan_cat_feature_cond_prob_ratio(x[:,int(f)],target_indices,prev_cond_indices=prev_cond_indices)
+    lx = None
+    if local_x is not None:
+        if isinstance(local_x,torch.Tensor):
+            local_x = local_x.numpy()
+        lx = local_x[int(f)]
+
+    inv = []
+    for i,(r,s) in enumerate(zip(ratios,supports)):
+        if s >= min_support and r > 1.0001:
+            if lx is not None and lx != cats[i]:
+                    continue
+            else:
+                if prev_cond_indices is None:
+                    new_prev_cond_indices = (x[:,int(f)]==cats[i])
+                else:
+                    new_prev_cond_indices = prev_cond_indices & (x[:,int(f)]==cats[i])
+                inv.append((r,cats[i],cats[i],s,new_prev_cond_indices))
+    if len(inv) == 0:
+        return inv
+    inv.sort(key=lambda x: x[0], reverse=True)
+    return inv[:top_K]
+    
+
+
+def add_potential_rules_for_numerical_feature(x,f,target_indices,prev_cond_indices=None,num_grids=20,min_support=2000,
+                        local_x=None,top_K=1,bin_strategy="kmeans",verbose=False):
     f_val = x[:,int(f)]
-    grids = np.linspace(f_val[~np.isnan(f_val)].min(),f_val[~np.isnan(f_val)].max(),num_grids) 
+    est = KBinsDiscretizer(n_bins=num_grids, encode='ordinal', strategy=bin_strategy, subsample=None)
+    est.fit(f_val.reshape(-1,1))
+    grids = est.bin_edges_[0]
+    #grids = np.linspace(f_val[~np.isnan(f_val)].min(),f_val[~np.isnan(f_val)].max(),num_grids+1) 
 
     grids,ratios,supports = preprocess_empty_grids(f_val,target_indices,grids,prev_cond_indices=prev_cond_indices,verbose=verbose)
     
@@ -152,10 +165,11 @@ def add_potential_rules(x,f,target_indices,prev_cond_indices=None,num_grids=20,m
         lx = local_x[int(f)]
   
 
-    peaks = find_peaks(ratios,verbose=verbose)
+    peaks = [] if len(ratios)<2 else find_peaks(ratios,verbose=verbose)
         
     inv = search_feature_intervals(f_val,peaks,grids,ratios,supports,target_indices,prev_cond_indices=prev_cond_indices,
                                     min_support=min_support,top_K=top_K,verbose=verbose)
+
     if lx is not None:
         ## check if local_x is in the candidate range
         for i in range(len(inv)-1,-1,-1):
@@ -170,13 +184,23 @@ def add_potential_rules(x,f,target_indices,prev_cond_indices=None,num_grids=20,m
             if len(tmp)>0:
                 gid = tmp[-1]
                 inv = search_feature_intervals(f_val,[gid],grids,ratios,supports,target_indices,prev_cond_indices=prev_cond_indices,
-                                    min_support=min_support,top_K=top_K,verbose=verbose)
-        
-                
-    
+                                    min_support=min_support,top_K=top_K,local=True,verbose=verbose)
+           
     return inv
         
-    
+
+
+
+def add_potential_rules(x,f,target_indices,prev_cond_indices=None,num_grids=20,min_support=2000,
+                        local_x=None,top_K=1,feature_type="float",bin_strategy="kmeans",verbose=False):
+    if verbose:
+        print("search rule for feature",f)   
+    if feature_type != "cat":
+        return add_potential_rules_for_numerical_feature(x,f,target_indices,prev_cond_indices=prev_cond_indices,num_grids=num_grids,
+                                                        min_support=min_support,local_x=local_x,top_K=top_K,bin_strategy=bin_strategy,verbose=verbose)
+    else:
+        return add_potential_rules_for_categorical_feature(x,f,target_indices,prev_cond_indices=prev_cond_indices,
+                                                        min_support=min_support,local_x=local_x,top_K=top_K,verbose=verbose)
 
 
 def preprocess_empty_grids(f_val,target_indices,grids,prev_cond_indices=None,verbose=False):
@@ -261,7 +285,7 @@ def find_peaks(ratios,verbose=False):
     return peaks
 
 
-def raise_feature_interval(f_val,grids,gid,ratios,supports,target_indices,prev_cond_indices=None,min_support=2000,verbose=False):
+def raise_feature_interval(f_val,grids,gid,ratios,supports,target_indices,prev_cond_indices=None,min_support=2000,local=False,verbose=False):
 
     if prev_cond_indices is None:
         sup = supports[gid]
@@ -270,7 +294,7 @@ def raise_feature_interval(f_val,grids,gid,ratios,supports,target_indices,prev_c
 
     ratio,left_id,right_id,sup = merge_feature_intervals(gid,sup,f_val,grids,ratios,target_indices,
                                                        prev_cond_indices=prev_cond_indices,
-                                                       min_support=min_support,verbose=verbose)
+                                                       min_support=min_support,local=local,verbose=verbose)
          
     ### check the support of the new range, if local_x is not None, check if local_x is in the new range
     if sup < min_support:
@@ -282,7 +306,7 @@ def raise_feature_interval(f_val,grids,gid,ratios,supports,target_indices,prev_c
 
 def merge_feature_intervals(gid,sup,f_val,grids,ratios,target_indices,
                             prev_cond_indices=None,min_support=2000,
-                            verbose=False):
+                            local=False,verbose=False):
     
     left_id = gid
     right_id = gid
@@ -298,12 +322,14 @@ def merge_feature_intervals(gid,sup,f_val,grids,ratios,target_indices,
         new_left_id = left_id - 1
         new_right_id = right_id + 1
         if verbose:
-            print("check before merge ids",left_id,right_id,new_left_id,new_right_id) 
+            print("check before merge ids: left {}, right {}, new left {}, new right{}".format(left_id,right_id,new_left_id,new_right_id))
 
         left_r = ratios[new_left_id] if new_left_id >= 0 else -1.
         right_r = ratios[new_right_id] if new_right_id < len(ratios) else -1.
         
         ## merge neighbor grid with ratio larger than 1
+        if left_r<0 and right_r<0:
+            break
         if left_r >= right_r or new_right_id >= len(ratios):
             merge = new_left_id
             m_r = left_r
@@ -312,7 +338,7 @@ def merge_feature_intervals(gid,sup,f_val,grids,ratios,target_indices,
             m_r = right_r
         if verbose:
             print("check merge ids",left_id,right_id,merge,m_r,old_r,left_r,right_r)    
-        if sup >= min_support and m_r < old_r:
+        if sup >= min_support and (m_r < old_r or local):
             # left_id = left_id + 1
             # right_id = right_id - 1
             break
@@ -351,7 +377,7 @@ def display_rules(rules,x,target_indices,y=None,c=-1,verbose=False,ftypes=None):
     fitness = (2.*h_cond_prob_z - 1.)*h_sup/np.sum(target_indices)
     
     ret = {"rules":rules,
-            "cond_prob_target":h_cond_prob_z,
+            "confidence":h_cond_prob_z,
             "support":h_sup,
             "fitness":fitness}
     if y is not None:
@@ -389,34 +415,14 @@ def target_prob_with_rules(rule_list,x,zids=None,y=None,c=-1,verbose=False):
 
 
 
-def find_top_pattern_for_one_target(x,y,target_indices,itemsets,c=1,num_grids=20,omega=0.1,min_support=500,
-                                max_depth=4,local_x=None,verbose=False,feature_types=None):
-
-    fids = gen_freq_feature_set(itemsets,min_support=min_support,max_len=max_depth*2)
-    fids = np.array(fids).astype(int)-1
-    print('feature set',fids)
-    rule_dict = gen_top_rule_dict_for_one_target(x,fids,target_indices,min_support=min_support,num_grids=num_grids,
-                                             max_depth=max_depth,local_x=local_x,verbose=verbose)
-
-
-    for p,rules in rule_dict.items():
-        print(p,rules)
-        if feature_types is not None and feature_types[int(p)] == 'int':
-            rule_dict[p]["rule"] = confine_int_feature_rules(rules["rule"])
-
-    processed_rules = {"rules":[rv for r in rule_dict.values() for rv in r["rule"] ]}
-    print("check processed rules",processed_rules)
-    processed_rules = display_rules(processed_rules["rules"],x,target_indices,y,c=c,verbose=verbose)
-
-        
-    return processed_rules
-
 
 def gen_rule_list_for_one_target(x,fids,target_indices,y=None,c=1,min_support=500,num_grids=20,max_depth=5,top_K=3,
-                                        local_x=None,feature_types=None,search="ordered",verbose=False,sort_by="cond_prob_target"):
+                                        local_x=None,feature_types=None,search="greedy",bin_strategy="kmeans",
+                                        verbose=False,sort_by="fitness"):
     
     rule_tree = build_rule_tree(list(fids),x,target_indices,grid_num=num_grids,min_support=min_support,
-                                max_depth=max_depth,top_K=top_K,local_x=local_x,search=search,verbose=verbose)
+                                max_depth=max_depth,top_K=top_K,local_x=local_x,search=search,
+                                feature_types=feature_types,bin_strategy=bin_strategy,verbose=verbose)
     if rule_tree is None:
         rule_dict = {}
     else:
@@ -430,8 +436,11 @@ def gen_rule_list_for_one_target(x,fids,target_indices,y=None,c=1,min_support=50
         for k in range(0,len(rlist),2):
             f = int(rlist[k][0])
             r = rlist[k:k+2]
-            if feature_types is not None and feature_types[int(f)] == 'int':                
-                r = confine_int_feature_rules(r)
+            if feature_types is not None:
+                if 'int' in feature_types[int(f)]:                
+                    r = confine_int_feature_rules(r)
+                elif 'cat' in feature_types[int(f)]:
+                    r = [(r[0][0],"==",r[0][2])]
             new_rlist += r
 
         rules["rules"] = new_rlist
@@ -442,17 +451,19 @@ def gen_rule_list_for_one_target(x,fids,target_indices,y=None,c=1,min_support=50
 
 
 
-def build_rule_tree(fids,x,target_indices,grid_num=20,min_support=2000,max_depth=4,top_K=3,local_x=None,search="ordered",verbose=False):
-    print("build_rule_tree")
+def build_rule_tree(fids,x,target_indices,grid_num=20,min_support=2000,max_depth=4,top_K=3,local_x=None,search="ordered",bin_strategy="kmeans",feature_types=None,verbose=False):
+    # print("build_rule_tree")
     rule_tree = RuleTree(min_support=min_support)
     add_branch_to_rule_tree(rule_tree.root,fids,x,target_indices,prev_cond_indices=None,path=[],grid_num=grid_num,
-                        min_support=min_support,max_depth=max_depth,top_K=top_K,local_x=local_x,search=search,verbose=verbose)
+                        min_support=min_support,max_depth=max_depth,top_K=top_K,local_x=local_x,search=search,
+                        feature_types=feature_types,bin_strategy=bin_strategy,verbose=verbose)
     return rule_tree
 
 
 
 def add_branch_to_rule_tree(parent,fids,x,target_indices,prev_cond_indices=None,path=[],grid_num=20,
-                            min_support=2000,max_depth=4,top_K=3,local_x=None,search="greedy",verbose=False):
+                            min_support=2000,max_depth=4,top_K=3,local_x=None,search="greedy",
+                            feature_types=None,bin_strategy="kmeans",verbose=False):
     fids_copy = fids.copy()
     r_limit = 1.0001
     if parent.fid != -1:
@@ -460,8 +471,10 @@ def add_branch_to_rule_tree(parent,fids,x,target_indices,prev_cond_indices=None,
     if len(fids_copy)>0:
         if search == "ordered":
             f = fids_copy[0]
+            feature_type="float" if feature_types is None else feature_types[f]
             potential_rules = add_potential_rules(x,f,target_indices,prev_cond_indices=prev_cond_indices,num_grids=grid_num,
-                                                min_support=min_support,top_K=top_K,local_x=local_x,verbose=verbose)
+                                                min_support=min_support,top_K=top_K,local_x=local_x,
+                                                feature_type=feature_type,bin_strategy=bin_strategy,verbose=verbose)
            
             best_potential_rules = [[potential_rules[k][0],f, potential_rules[k]] for k in range(len(potential_rules))]
             
@@ -470,8 +483,10 @@ def add_branch_to_rule_tree(parent,fids,x,target_indices,prev_cond_indices=None,
             # initialize top_K best rules with the lower ratio limit   
             best_potential_rules = [[r_limit,fids_copy[0],None]]*top_K
             for f in fids_copy:
+                feature_type="float" if feature_types is None else feature_types[f]
                 potential_rules = add_potential_rules(x,f,target_indices,prev_cond_indices=prev_cond_indices,num_grids=grid_num,
-                                                min_support=min_support,top_K=top_K,local_x=local_x,verbose=verbose) 
+                                                min_support=min_support,top_K=top_K,local_x=local_x,
+                                                feature_type=feature_type,bin_strategy=bin_strategy,verbose=verbose) 
                 if len(potential_rules) == 0:
                     continue
                 for k in range(len(potential_rules)):
@@ -497,12 +512,15 @@ def add_branch_to_rule_tree(parent,fids,x,target_indices,prev_cond_indices=None,
                 break
             f = potential_rule[1]
             cond_ratio, left, right, sup, new_prev_cond_indices = potential_rule[-1]
-            print('check potential rule',f,cond_ratio,left,right,sup)
+            if verbose:
+                print('check potential rule',f,cond_ratio,left,right,sup)
             if sup < min_support or cond_ratio <= r_limit:
-                print('no enough support or ratio,skip',sup,cond_ratio)
+                if verbose:
+                    print('no enough support or ratio,skip',sup,cond_ratio)
                 
-            else:          
-                print('add rule',path, f, potential_rule[:-1])  
+            else:  
+                if verbose:        
+                    print('add rule',path, f, potential_rule[-1][:-1])  
                 valid = True                  
                 new_node = RuleNode(f,parent,left,right,cond_ratio,sup)
                 parent.add_child(new_node)
@@ -511,187 +529,20 @@ def add_branch_to_rule_tree(parent,fids,x,target_indices,prev_cond_indices=None,
                 if len(path_copy) < max_depth:
                     add_branch_to_rule_tree(new_node,fids_copy,x,target_indices,prev_cond_indices=new_prev_cond_indices,
                                             path=path_copy,grid_num=grid_num,min_support=min_support,max_depth=max_depth,
-                                            top_K=top_K,local_x=local_x,search=search,verbose=verbose)
+                                            top_K=top_K,local_x=local_x,search=search,feature_types=feature_types,bin_strategy=bin_strategy,verbose=verbose)
         if not valid and search == "ordered":
-            print('no valid rule,skip',f)
+            if verbose:
+                print('no valid rule,skip',f)
             fids_copy.remove(f)
             if parent.fid!=-1:
                 fids_copy.insert(0,parent.fid)
             add_branch_to_rule_tree(parent,fids_copy,x,target_indices,prev_cond_indices=prev_cond_indices,path=path,grid_num=grid_num,
-                                    min_support=min_support,max_depth=max_depth,top_K=top_K,local_x=local_x,search=search,verbose=verbose)
+                                    min_support=min_support,max_depth=max_depth,top_K=top_K,local_x=local_x,search=search,
+                                    feature_types=feature_types,bin_strategy=bin_strategy,verbose=verbose)
 
     return
 
 
-
-    
-def gen_rule_lists_for_one_latent_state(x,z,itemsets_z,zw_pos,thd_h,thd_l,y=None,min_support_pos=500,min_support_neg=2000,
-                                    num_grids=20,max_depth=5,local_x=None,top_K=3,feature_types=None,search="ordered",verbose=False):
-    comb_z = gen_freq_feature_set(itemsets_z,min_support=min(min_support_pos,min_support_neg),max_len=max_depth)
-    comb_z = np.array(comb_z).astype(int)-1
-    print('feature set',comb_z)
-    min_support_h = min_support_pos if zw_pos else min_support_neg
-    min_support_l = min_support_neg if zw_pos else min_support_pos
-
-
-    rule_dict_higher_z = gen_rule_list_for_one_target(x,comb_z,z>=thd_h,y=y,c=int(zw_pos),min_support=min_support_h,num_grids=num_grids,max_depth=max_depth,
-                                                             top_K=top_K,local_x=local_x,feature_types=feature_types,search=search,verbose=verbose)
-    rule_dict_lower_z = gen_rule_list_for_one_target(x,comb_z,z<=thd_l,y=y,c=int(1-zw_pos),min_support=min_support_l,num_grids=num_grids,max_depth=max_depth,
-                                                             top_K=top_K,local_x=local_x,feature_types=feature_types,search=search,verbose=verbose)
-    
-    return rule_dict_higher_z,rule_dict_lower_z
-
-
-
-
-def find_pattern_by_latent_state(x,z,itemsets_z,zw_pos,y=None,c=1,num_grids=20,omega=0.1,min_support_pos=500,min_support_neg=2000,
-                                 max_depth=4,local_x=None,top_K=3,feature_names=None,feature_types=None,verbose=False):
-    thd_h,thd_l = scan_thresholds_for_one_latent_state(z,y==c,zw_pos=zw_pos,omega=omega,min_support_pos=min_support_pos,
-                                                       min_support_neg=min_support_neg,num_grids=num_grids)
-    print("thd_h",thd_h,"thd_l",thd_l,"pos",zw_pos)
-    rule_list_higher_z,rule_list_lower_z = gen_rule_lists_for_one_latent_state(x,z,itemsets_z,zw_pos,thd_h,thd_l,y=y,min_support_pos=min_support_pos,
-                                                                               min_support_neg=min_support_neg,num_grids=num_grids,max_depth=max_depth,
-                                                                               top_K=top_K,local_x=local_x,feature_names=feature_names,
-                                                                               feature_types=feature_types,verbose=verbose) 
-    z_rules_dict = {"pos":zw_pos,
-                    "thd_h":thd_h,
-                    "thd_l":thd_l,
-                    "p(z>=thd_h)":np.sum(z>=thd_h)/len(z),
-                    "p(z<=thd_l)":np.sum(z<=thd_l)/len(z)}
-    z_rules_dict["rule_dict_higher_z"] = rule_list_higher_z
-    z_rules_dict["rule_dict_lower_z"] = rule_list_lower_z
-
-    return z_rules_dict
-
-
-def scan_thresholds_for_one_latent_state(z,Y,zw_pos,omega=0.1,min_support_pos=500,min_support_neg=2000,num_grids=20):
-    ## Y is binary
-    print("min",z.min(),"max",z.max())
-    grids = np.linspace(z.min(),z.max(),num_grids)
-    tot_p_true = np.sum(Y==1)/len(Y)
-    tot_p_false = np.sum(Y==0)/len(Y)
-    splits = []
-    igains_h, igains_l= [],[]
-    supports_h, supports_l = [],[]
-    print('p(y=1)',tot_p_true)
-    for g in grids:
-        
-        if np.sum(Y[z>=g]==1)==0 or np.sum(Y[z>=g]==0)==0:
-            continue
-        h_pr = (z>=g).sum()/len(Y)  
-        if h_pr == 1. or h_pr ==0.:
-            continue
-            
-        # print('split',g) 
-        ih,il,sh,sl = calc_split_informgains(g,Y,z,zw_pos,tot_p_true,tot_p_false,h_pr)
-        igains_h.append(ih)
-        igains_l.append(il)
-        supports_h.append(sh)
-        supports_l.append(sl)
-                
-        splits.append(g)
-    thd_h = locate_threshold(np.array(igains_h),np.array(supports_h),splits,omega=omega,min_support=min_support_pos)
-    thd_l = locate_threshold(np.array(igains_l),np.array(supports_l),splits,omega=omega,min_support=min_support_neg)
-        
-    
-    return thd_h,thd_l
-
-
-def calc_split_informgains(split,Y,z,zw_pos,tot_p_true,tot_p_false,h_pr):
-    
-    if zw_pos:
-        h_p_true = np.sum(Y[z>=split]==1)/len(Y[z>=split])
-        l_p_false = np.sum(Y[z<=split]==0)/len(Y[z<=split])
-
-        igain_h1 = inform_gain(tot_p_true,[h_pr],[np.array([h_p_true])])
-        igain_l0 = inform_gain(tot_p_false,[1.-h_pr],[np.array([l_p_false])])  
-        support_h1 = np.sum(Y[z>=split]==1)
-        support_l0 = np.sum(Y[z<=split]==0)
-        return igain_h1,igain_l0,support_h1,support_l0
-    else:
-        h_p_false = np.sum(Y[z>=split]==0)/len(Y[z>=split])        
-        l_p_true = np.sum(Y[z<=split]==1)/len(Y[z<=split])
-        
-        igain_h0 = (inform_gain(tot_p_false,[h_pr],[np.array([h_p_false])]))
-        igain_l1 = (inform_gain(tot_p_true,[1.-h_pr],[np.array([l_p_true])])) 
-        support_l1 = np.sum(Y[z<split]==1)
-        support_h0 = np.sum(Y[z>=split]==0) 
-        return igain_h0,igain_l1,support_h0,support_l1
-    
-    
-def locate_threshold(igains,supports,splits,omega=0.1,min_support=2000):
-
-    if (supports>=min_support).sum()==0:
-        print('no enough support')
-        return 0.
-        
-    igains = (igains-igains.min())/(igains.max()-igains.min())
-    igains[supports<min_support]=0.
-    supports = (supports-supports.min())/(supports.max()-supports.min())
-    thd = splits[np.argmax(igains*(1.-omega)+supports*omega)]
-    return thd
-
-
-def entropy(probs):
-    return -np.sum(probs*np.log(probs+1e-5))
-
-def inform_gain(p_class_probs,c_probs,c_class_probs):
-    H_p = entropy(p_class_probs)
-    H_pc = 0.
-    for c_pr, c_cl_pr in zip(c_probs, c_class_probs):
-        H_c = entropy(c_cl_pr)
-        H_pc += c_pr*H_c
-        
-    return H_p - H_pc
-
-
-    
-def sort_rules(z_rules,input_feature_names,sort_by="cond_prob_y",pos=True,top=3):
-    sorted_rules = []
-    for zid, zr_dict in z_rules.items():
-        new_zr = []
-        print(zid,zr_dict['pos'])
-        if zr_dict['pos']==pos:
-            list_name = 'rule_dict_higher_z'
-            p_thd = 'p(z>=thd_h)'
-            thd = 'thd_h'
-        else:
-            list_name = 'rule_dict_lower_z'
-            p_thd = 'p(z<=thd_l)'
-            thd = 'thd_l'
-        ## for dict with only one side    
-        if list_name not in zr_dict.keys():
-            if 'p(z>=thd_h)' in zr_dict.keys():
-                list_name = 'rule_dict_higher_z'  
-                p_thd = 'p(z>=thd_h)'
-                thd = 'thd_h'
-            else:
-                list_name = 'rule_dict_lower_z'
-                p_thd = 'p(z<=thd_l)'
-                thd = 'thd_l'
-        
-        for rdict in zr_dict[list_name]:
-            new_zrd = {}
-            new_r = []
-            
-            for r in rdict["rules"]:
-                new_r.append((r[0],input_feature_names[r[0]],r[1],r[2]))
-
-            if len(new_r) == 0:
-                print("no rules",zr_dict)
-                continue
-            new_zrd["rules"] = new_r
-            new_zrd['zid'] = zid
-            new_zrd[p_thd]=zr_dict[p_thd]
-            new_zrd[thd]=zr_dict[thd] 
-            new_zrd['pos'] = zr_dict['pos']
-            for f in ['cond_prob_y','cond_prob_target','support','ratio_y']:
-                new_zrd[f] = rdict[f]
-
-            sorted_rules.append(new_zrd)
-
-    sorted_rules.sort(key=lambda x: x[sort_by], reverse=True)
-    return sorted_rules
 
 
 def replace_feature_names(rules,input_feature_names,time_index=False):
@@ -705,43 +556,46 @@ def replace_feature_names(rules,input_feature_names,time_index=False):
             new_r.append((r[0],input_feature_names[int(r[0]%f_len)]+"_t"+str(int(r[0]/f_len)),r[1],r[2]))
     return new_r
 
+ 
+    
+def param_grid_search_for_amore(bin_strategies,ng_range,support_range,X,fids,target_indices,y,c=1,confidence_lower_bound = 0.75,
+                                max_depth=1,top_K=3,sort_by="fitness",feature_types=None,local_x=None,verbose=False):
+    best_rule_set = None
+    best_fitness,best_confidence = 0., 0.
+    best_configs = None
+    config_metric_records = {}
 
-def match_sample_rules(xi,rules_list,time_dim=False,num_latent_per_time=1):
-    ret = []
-    for rules in rules_list:
-        match = []
-        if time_dim:
-            time_step= int(rules["zid"]/num_latent_per_time)
-            #latent_id = int(rules["zid"]%num_latent_per_time)
-            xi_t = xi[time_step,:]
-        else:
-            xi_t = xi
-        for r in rules["rules"]:
-            fval = xi_t[r[0]]
-            if not op_map[r[-2]](fval,r[-1]):
-                # match = False
-                break
-            else:
-                match.append(r)
-        if len(match) > 0:            
-            ret.append(match)
-    return ret
+    for bin_strategy in bin_strategies:
+        for num_grids in ng_range:   
+            config_metric_records[(bin_strategy,num_grids)]={"min_supports":support_range}
+            top_confidence_records,top_fitness_records, actual_supports = [],[],[]
+            for min_support in support_range:
+                print("check config",bin_strategy,num_grids,min_support)
+                y_rule_candidates = gen_rule_list_for_one_target(X,fids,target_indices,y=y,c=c,sort_by=sort_by,
+                                                        min_support=min_support,num_grids=num_grids,max_depth=max_depth,top_K=top_K,
+                                                        local_x=local_x,feature_types=feature_types,bin_strategy=bin_strategy,
+                                                        verbose=verbose)
+                top_fitness = y_rule_candidates[0]["fitness"]
+                top_confidence = y_rule_candidates[0]["confidence"]
+                # print("check top",y_rule_candidates[0])
+                top_confidence_records.append(top_confidence)
+                top_fitness_records.append(top_fitness)            
+                actual_supports.append(y_rule_candidates[0]["support"])
+                if top_confidence >= confidence_lower_bound:
+                    if sort_by == "fitness" and top_fitness > best_fitness:
+                        best_rule_set = y_rule_candidates[0]
+                        best_fitness = top_fitness
+                        best_configs = {"bin_strategy":bin_strategy, "num_grids":num_grids, "min_support":min_support}
+
+                    elif sort_by == "confidence" and top_confidence > best_confidence:
+                        best_rule_set = y_rule_candidates[0]
+                        best_confidence = top_confidence
+                        best_configs = {"bin_strategy":bin_strategy, "num_grids":num_grids, "min_support":min_support}
+            config_metric_records[(bin_strategy,num_grids)]["top_confidence_records"]=top_confidence_records
+            config_metric_records[(bin_strategy,num_grids)]["top_fitness_records"]=top_fitness_records
+            config_metric_records[(bin_strategy,num_grids)]["actual_support"]=actual_supports
+    return best_rule_set, best_configs, config_metric_records
 
 
-def get_sample_latent_state_thresholds(zi,y,z,zw_pos,c=1,num_grids=20,omega=0.1,min_support_pos=500,min_support_neg=2000):
-    thd_h,thd_l = scan_thresholds_for_one_latent_state(z,y==c,zw_pos=zw_pos,omega=omega,min_support_pos=min_support_pos,
-                                                       min_support_neg=min_support_neg,num_grids=num_grids)
-    print("raw thd",thd_h,thd_l)
-    if zi >= thd_h:
-        return thd_h,True
-    elif zi <= thd_l:
-        return thd_l,False
-    else:
-        tot_p_true = np.sum(y==1)/len(y)
-        tot_p_false = np.sum(y==0)/len(y)
-        h_pr = (z>=zi).sum()/len(y)
-        ih,il,sh,sl = calc_split_informgains(zi,y,z,zw_pos,tot_p_true,tot_p_false,h_pr)
-        sign = ih > il
-        return zi, sign
 
 

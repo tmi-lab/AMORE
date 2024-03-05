@@ -33,7 +33,7 @@ class RuleNode:
         
 class RuleTree:
     def __init__(self,min_support=200,min_score=1.):
-        print("init rule tree")
+        # print("init rule tree")
         self.min_support = min_support
         self.min_score = min_score
         self.root = RuleNode(-1,None,0,0,0,0)
