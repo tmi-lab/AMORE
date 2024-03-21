@@ -1,6 +1,18 @@
+# -----------------------------------------------------------------------------------------
+# This work is licensed under the Creative Commons Attribution 4.0 International License.
+# To view a copy of this license, visit http://creativecommons.org/licenses/by/4.0/
+#
+# Author: Yu Chen
+# Year: 2023
+# Description: This file contains the implementation of the regional rule extraction method AMORE.
+# -----------------------------------------------------------------------------------------
+
+
+
 import numpy as np
 import torch
 import operator
+from tqdm import tqdm
 from sklearn.preprocessing import KBinsDiscretizer
 
 
@@ -565,16 +577,21 @@ def param_grid_search_for_amore(bin_strategies,ng_range,support_range,X,fids,tar
     best_configs = None
     config_metric_records = {}
 
-    for bin_strategy in bin_strategies:
-        for num_grids in ng_range:   
+    for bin_strategy in tqdm(bin_strategies):
+        for num_grids in tqdm(ng_range,leave=False):   
             config_metric_records[(bin_strategy,num_grids)]={"min_supports":support_range}
             top_confidence_records,top_fitness_records, actual_supports = [],[],[]
             for min_support in support_range:
-                print("check config",bin_strategy,num_grids,min_support)
+                # print("check config",bin_strategy,num_grids,min_support)
                 y_rule_candidates = gen_rule_list_for_one_target(X,fids,target_indices,y=y,c=c,sort_by=sort_by,
                                                         min_support=min_support,num_grids=num_grids,max_depth=max_depth,top_K=top_K,
                                                         local_x=local_x,feature_types=feature_types,bin_strategy=bin_strategy,
                                                         verbose=verbose)
+                if len(y_rule_candidates) == 0:
+                    top_confidence_records.append(0)
+                    top_fitness_records.append(0)            
+                    actual_supports.append(0)
+                    continue
                 top_fitness = y_rule_candidates[0]["fitness"]
                 top_confidence = y_rule_candidates[0]["confidence"]
                 # print("check top",y_rule_candidates[0])
