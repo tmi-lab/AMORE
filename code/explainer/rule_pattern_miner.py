@@ -576,9 +576,9 @@ def param_grid_search_for_amore(bin_strategies,ng_range,support_range,X,fids,tar
     best_fitness,best_confidence = 0., 0.
     best_configs = None
     config_metric_records = {}
-
-    for bin_strategy in tqdm(bin_strategies):
-        for num_grids in tqdm(ng_range,leave=False):   
+    print("grid search hyperparameters")
+    for bin_strategy in bin_strategies:
+        for num_grids in ng_range:   
             config_metric_records[(bin_strategy,num_grids)]={"min_supports":support_range}
             top_confidence_records,top_fitness_records, actual_supports = [],[],[]
             for min_support in support_range:

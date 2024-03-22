@@ -11,6 +11,9 @@ import pandas as pd
 import numpy as np
 import torch
 from .integrad import integrad
+import matplotlib.pyplot as plt 
+import seaborn as sns
+from matplotlib.lines import Line2D
 
 def cosine_sim(a, b,dims):
     sim = (a*b).sum(dim=dims)/(torch.sqrt(torch.sum(a**2,dim=dims))*torch.sqrt(torch.sum(b**2,dim=dims)))
@@ -305,3 +308,75 @@ def find_py_threshold(p_grids,pred_y_prob,true_y,c=1,high=True):
     return thd
 
 
+def plot_confidence_fitness_curve(cf_mtx,ft_mtx,DT_cf_mtx,DT_ft_mtx,support_range,confidence_lower_bound=0.8,save_path="./compare_DT.svg",y_lim=[0.,1.],
+                                  legend_loc_1=[1.02,0.75],legend_loc_2=[1.02,0.25]):
+    best_cfs,best_fts=[],[]
+    DT_best_cfs,DT_best_fts=[],[]
+    ft_mtx_cp = ft_mtx.copy()
+    DT_ft_mtx_cp = DT_ft_mtx.copy()
+
+    ft_mtx_cp[cf_mtx<confidence_lower_bound]=0
+    DT_ft_mtx_cp[DT_cf_mtx<confidence_lower_bound]=0.
+
+    for s in range(cf_mtx.shape[1]):
+        cid = np.argmax(ft_mtx_cp[:,s])
+
+        bc = cf_mtx[cid,s]
+        if bc >= confidence_lower_bound:
+            best_cfs.append(bc)
+            best_fts.append(ft_mtx[cid,s])
+        else:
+            cid = np.argmax(ft_mtx[:,s])
+            bc = cf_mtx[cid,s]
+            best_cfs.append(bc)
+            best_fts.append(ft_mtx[cid,s])
+
+
+        cid = np.argmax(DT_ft_mtx_cp[:,s])
+        bc = DT_cf_mtx[cid,s]
+        if bc >= confidence_lower_bound:
+            DT_best_cfs.append(bc)
+            DT_best_fts.append(DT_ft_mtx[cid,s])
+        else:
+            cid = np.argmax(DT_ft_mtx[:,s])
+            bc = DT_cf_mtx[cid,s]
+            DT_best_cfs.append(bc)
+            DT_best_fts.append(DT_ft_mtx[cid,s])
+            
+
+    sns.set_style("whitegrid")
+    plt.figure(figsize=(5,4))
+
+    color1 = '#377eb8'  # Blue
+    color2 = '#e41a1c'  # Red
+
+    plt.plot(support_range,best_cfs,"-o",color=color1,markersize=4)
+    plt.plot(support_range,best_fts,"--o",color=color1,markersize=4)
+
+    plt.plot(support_range,DT_best_cfs,"-o",color=color2,markersize=4)
+    plt.plot(support_range,DT_best_fts,"--o",color=color2,markersize=4)
+
+    plt.xlim(support_range[0],support_range[-1])
+    plt.ylim(y_lim[0],y_lim[1])
+    plt.xticks(support_range)
+
+    # Creating custom lines for the color legend
+    custom_lines_color = [Line2D([0], [0], color=color1, lw=4),
+                            Line2D([0], [0], color=color2, lw=4)]
+
+
+    # Creating custom lines for the line style legend
+    custom_lines_style = [Line2D([0], [0], color='grey', lw=2, linestyle='-'),
+                            Line2D([0], [0], color='grey', lw=2, linestyle='--')]
+
+        # Creating the color legend
+    color_legend = plt.legend(custom_lines_color, ['AMORE', 'DT Classifier'], loc=legend_loc_1, title="Methods")
+
+    # Adding the color legend manually to avoid it being replaced by the line style legend
+    plt.gca().add_artist(color_legend)
+
+    # Creating the line style legend
+    plt.legend(custom_lines_style, ['Confidence','Fitness'], loc=legend_loc_2, title="Metrics")
+
+    plt.xlabel("Specified minimum support")
+    plt.savefig(save_path)
