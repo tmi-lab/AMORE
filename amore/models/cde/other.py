@@ -1,10 +1,7 @@
-import pathlib
-import sys
 import torch
 import torchdiffeq
 
-here = pathlib.Path(__file__).resolve().parent
-sys.path.append(str(here / '..'))
+
 
 import controldiffeq
 

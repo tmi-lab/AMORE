@@ -1,10 +1,13 @@
 
 import torch
-
-
 import controldiffeq
 
-from models.cde_interp import LinearInterpolation,get_interp_coeffs
+import pathlib
+import sys
+here = pathlib.Path(__file__).resolve().parent
+sys.path.append(str(here / '..'))
+
+from cde_interp import LinearInterpolation,get_interp_coeffs
 
 
 

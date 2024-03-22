@@ -8,7 +8,7 @@ import numpy as np
 here = os.getcwd()
 sys.path.append(os.path.join(here,"../"))
 
-from models.cde_interp.interpolation_common import get_interp_coeffs
+from cde_interp.interpolation_common import get_interp_coeffs
 
 import controldiffeq
 
