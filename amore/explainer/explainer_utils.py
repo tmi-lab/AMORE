@@ -9,6 +9,7 @@
 
 import pandas as pd
 import numpy as np
+import os
 import torch
 from .integrad import integrad
 import matplotlib.pyplot as plt 
@@ -308,7 +309,7 @@ def find_py_threshold(p_grids,pred_y_prob,true_y,c=1,high=True):
     return thd
 
 
-def plot_confidence_fitness_curve(cf_mtx,ft_mtx,DT_cf_mtx,DT_ft_mtx,support_range,confidence_lower_bound=0.8,save_path="./compare_DT.svg",y_lim=[0.,1.],
+def plot_confidence_fitness_curve(cf_mtx,ft_mtx,DT_cf_mtx,DT_ft_mtx,support_range,confidence_lower_bound=0.8,save_path="./",y_lim=[0.,1.],
                                   legend_loc_1=[1.02,0.75],legend_loc_2=[1.02,0.25]):
     best_cfs,best_fts=[],[]
     DT_best_cfs,DT_best_fts=[],[]
@@ -379,4 +380,8 @@ def plot_confidence_fitness_curve(cf_mtx,ft_mtx,DT_cf_mtx,DT_ft_mtx,support_rang
     plt.legend(custom_lines_style, ['Confidence','Fitness'], loc=legend_loc_2, title="Metrics")
 
     plt.xlabel("Specified minimum support")
-    plt.savefig(save_path)
+    plt.title(r"$\iota = $" + str(confidence_lower_bound))
+    
+    if not os.path.exists(save_path):
+        os.mkdir(save_path)
+    plt.savefig(os.path.join(save_path,"compare_DT_"+str(int(confidence_lower_bound*10))+".svg"))

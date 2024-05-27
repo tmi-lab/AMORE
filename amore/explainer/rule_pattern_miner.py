@@ -458,7 +458,7 @@ def raise_feature_interval(f_val,grids,gid,ratios,supports,target_indices,prev_c
     else:
         sup = np.sum((f_val[prev_cond_indices]>=grids[gid])&(f_val[prev_cond_indices]<=grids[gid+1]))
 
-    ratio,left_id,right_id,sup = merge_feature_intervals(gid,sup,f_val,grids,ratios,target_indices,
+    ratio,left_id,right_id,sup = expand_feature_intervals(gid,sup,f_val,grids,ratios,target_indices,
                                                        prev_cond_indices=prev_cond_indices,
                                                        min_support=min_support,local=local,verbose=verbose)
          
@@ -470,7 +470,7 @@ def raise_feature_interval(f_val,grids,gid,ratios,supports,target_indices,prev_c
     return ratio,grids[left_id],grids[right_id],sup
 
 
-def merge_feature_intervals(gid,sup,f_val,grids,ratios,target_indices,
+def expand_feature_intervals(gid,sup,f_val,grids,ratios,target_indices,
                             prev_cond_indices=None,min_support=2000,
                             local=False,verbose=False):
     """"
@@ -498,7 +498,7 @@ def merge_feature_intervals(gid,sup,f_val,grids,ratios,target_indices,
     old_r = ratios[gid]
     r_limit = 1.0001
     if verbose:
-        print("merge_feature_intervals",gid,sup,old_r,grids[gid])
+        print("expand_feature_intervals",gid,sup,old_r,grids[gid])
     while old_r > r_limit or sup < min_support:
         
         # if left_id == 0 or right_id == len(ratios)-1:
