@@ -20,6 +20,7 @@ op_map = {'>=':operator.ge,'>':operator.gt,'<=':operator.le,'<':operator.lt,'=='
 
 from .itemsets_miner import *
 from .RuleGrowth_tree import RuleTree,RuleNode
+from .DT_rules import param_grid_search_for_DT
 
 
 def scan_feature_cond_prob_ratio(f_val,z_indices,grids,prev_cond_indices=None):
@@ -564,12 +565,12 @@ def display_rules(rules,x,target_indices,y=None,c=1,verbose=False):
     fitness = (2.*h_cond_prob_z - 1.)*h_sup/np.sum(target_indices)
     
     ret = {"rules":rules,
-            "confidence":h_cond_prob_z,
+            "confidence":round(h_cond_prob_z,3),
             "support":h_sup,
-            "fitness":fitness}
+            "fitness":round(fitness,3)}
     if y is not None:
-        ret["cond_prob_y"] = h_cond_prob_y
-        ret["ratio_y"] = h_ratio_y
+        ret["cond_prob_y"] = round(h_cond_prob_y,3)
+        ret["ratio_y"] = round(h_ratio_y,3)
     return ret
 
 
@@ -629,7 +630,7 @@ def target_prob_with_rules(rule_list,x,zids=None,y=None,c=1,verbose=False):
 
 def gen_rule_list_for_one_target(x,fids,target_indices,y=None,c=1,min_support=500,num_grids=20,max_depth=5,top_K=3,
                                         local_x=None,feature_types=None,search="greedy",bin_strategy="kmeans",
-                                        verbose=False,sort_by="fitness",remove_duplicate=False):
+                                        depth_gain=0.005,verbose=False,sort_by="fitness",remove_duplicate=False):
     """
     Generate rule sets for a target pattern
 
@@ -656,7 +657,7 @@ def gen_rule_list_for_one_target(x,fids,target_indices,y=None,c=1,min_support=50
     """
     
     rule_tree = build_rule_tree(list(fids),x,target_indices,grid_num=num_grids,min_support=min_support,
-                                max_depth=max_depth,top_K=top_K,local_x=local_x,search=search,
+                                max_depth=max_depth,top_K=top_K,local_x=local_x,search=search,depth_gain=depth_gain,
                                 feature_types=feature_types,bin_strategy=bin_strategy,verbose=verbose)
     if rule_tree is None:
         rule_dict = {}
@@ -689,7 +690,7 @@ def gen_rule_list_for_one_target(x,fids,target_indices,y=None,c=1,min_support=50
 
 
 def build_rule_tree(fids,x,target_indices,grid_num=20,min_support=2000,max_depth=4,top_K=3,local_x=None,search="greedy",
-                    bin_strategy="kmeans",feature_types=None,verbose=False):
+                    bin_strategy="kmeans",depth_gain=0.005,feature_types=None,verbose=False):
     """
     Build a tree structure for generating and storing rule sets
 
@@ -714,14 +715,14 @@ def build_rule_tree(fids,x,target_indices,grid_num=20,min_support=2000,max_depth
     rule_tree = RuleTree(min_support=min_support)
     add_branch_to_rule_tree(rule_tree.root,fids,x,target_indices,prev_cond_indices=None,path=[],grid_num=grid_num,
                         min_support=min_support,max_depth=max_depth,top_K=top_K,local_x=local_x,search=search,
-                        feature_types=feature_types,bin_strategy=bin_strategy,verbose=verbose)
+                        feature_types=feature_types,bin_strategy=bin_strategy,depth_gain=depth_gain,verbose=verbose)
     return rule_tree
 
 
 
 def add_branch_to_rule_tree(parent,fids,x,target_indices,prev_cond_indices=None,path=[],grid_num=20,
                             min_support=2000,max_depth=4,top_K=3,local_x=None,search="greedy",
-                            feature_types=None,bin_strategy="kmeans",verbose=False):
+                            feature_types=None,bin_strategy="kmeans",depth_gain=0.005,verbose=False):
     """
     Recursively add branches to the rule tree
 
@@ -743,7 +744,7 @@ def add_branch_to_rule_tree(parent,fids,x,target_indices,prev_cond_indices=None,
         verbose (bool, optional): print verbose. Defaults to False.
     """
     fids_copy = fids.copy()
-    r_limit = 1.0001
+    r_limit = 1. + depth_gain
     if parent.fid != -1:
         fids_copy.remove(parent.fid)
     if len(fids_copy)>0:
@@ -759,7 +760,7 @@ def add_branch_to_rule_tree(parent,fids,x,target_indices,prev_cond_indices=None,
             
         if search == "greedy":
             # initialize top_K best rules with the lower ratio limit   
-            best_potential_rules = [[r_limit,fids_copy[0],None]]*top_K
+            best_potential_rules = [[1.,fids_copy[0],None]]*top_K
             for f in fids_copy:
                 feature_type="float" if feature_types is None else feature_types[f]
                 potential_rules = add_potential_rules(x,f,target_indices,prev_cond_indices=prev_cond_indices,num_grids=grid_num,
@@ -780,19 +781,19 @@ def add_branch_to_rule_tree(parent,fids,x,target_indices,prev_cond_indices=None,
             if verbose:            
                 print('best rule',best_potential_rules)
             
-            if best_potential_rules[0][0]<=r_limit:
+            if best_potential_rules[0][0]<r_limit:
                 # nothing to add, just return
                 return
             
         valid = False     
         for k, potential_rule in enumerate(best_potential_rules):
-            if potential_rule[0] == r_limit:
+            if potential_rule[0] < r_limit:
                 break
             f = potential_rule[1]
             cond_ratio, left, right, sup, new_prev_cond_indices = potential_rule[-1]
             if verbose:
                 print('check potential rule',f,cond_ratio,left,right,sup)
-            if sup < min_support or cond_ratio <= r_limit:
+            if sup < min_support or cond_ratio < r_limit:
                 if verbose:
                     print('no enough support or ratio,skip',sup,cond_ratio)
                 
@@ -847,7 +848,7 @@ def replace_feature_names(rules,input_feature_names,time_index=False):
  
     
 def param_grid_search_for_amore(bin_strategies,ng_range,support_range,X,fids,target_indices,y,c=1,confidence_lower_bound = 0.8,
-                                max_depth=1,top_K=3,sort_by="fitness",feature_types=None,local_x=None,verbose=False):
+                                max_depth=1,top_K=3,sort_by="fitness",feature_types=None,local_x=None,depth_gain=0.005,verbose=False):
     """
     Grid search hyperparameters for AMORE
 
@@ -872,7 +873,7 @@ def param_grid_search_for_amore(bin_strategies,ng_range,support_range,X,fids,tar
         dict,dict,dict: best rule set, best configurations, metric records
     """
     best_rule_set = None
-    best_fitness,best_confidence = 0., 0.
+    best_fitness, best_confidence = 0.,0.
     best_configs = None
     config_metric_records = {}
     print("grid search hyperparameters")
@@ -885,28 +886,56 @@ def param_grid_search_for_amore(bin_strategies,ng_range,support_range,X,fids,tar
                 y_rule_candidates = gen_rule_list_for_one_target(X,fids,target_indices,y=y,c=c,sort_by=sort_by,
                                                         min_support=min_support,num_grids=num_grids,max_depth=max_depth,top_K=top_K,
                                                         local_x=local_x,feature_types=feature_types,bin_strategy=bin_strategy,
-                                                        verbose=verbose)
+                                                        depth_gain=depth_gain,verbose=verbose)
                 if len(y_rule_candidates) == 0:
                     top_confidence_records.append(0)
                     top_fitness_records.append(0)            
                     actual_supports.append(0)
                     continue
-                top_fitness = y_rule_candidates[0]["fitness"]
-                top_confidence = y_rule_candidates[0]["confidence"]
+                
+                top_id = 0
+                if sort_by == "fitness":
+                    ## find the first rule set with confidence larger than confidence_lower_bound
+                    while top_id < len(y_rule_candidates) and y_rule_candidates[top_id]["confidence"] < confidence_lower_bound:
+                        # print("skip rule set",top_id,y_rule_candidates[top_id])
+                        top_id += 1
+                    ## if no rule set with confidence larger than confidence_lower_bound, use the first one
+                    if top_id == len(y_rule_candidates):
+                        # print("no rule set with confidence larger than confidence_lower_bound")
+                        top_id = 0
+                        
+                
+                top_fitness = y_rule_candidates[top_id]["fitness"]
+                top_confidence = y_rule_candidates[top_id]["confidence"]
                 
                 top_confidence_records.append(top_confidence)
                 top_fitness_records.append(top_fitness)            
-                actual_supports.append(y_rule_candidates[0]["support"])
-                if top_confidence >= confidence_lower_bound:
-                    if sort_by == "fitness" and top_fitness > best_fitness:
-                        best_rule_set = y_rule_candidates[0]
+                actual_supports.append(y_rule_candidates[top_id]["support"])
+                
+                if sort_by == "confidence": 
+                    if top_confidence > best_confidence:
+                        best_rule_set = y_rule_candidates[top_id]
+                        best_confidence = top_confidence
                         best_fitness = top_fitness
                         best_configs = {"bin_strategy":bin_strategy, "num_grids":num_grids, "min_support":min_support}
+                        print(bin_strategy,num_grids, min_support,"\n top rule set",y_rule_candidates[top_id])
+                        
+                else:
+                    if top_confidence >= confidence_lower_bound:
+                        if (best_confidence < confidence_lower_bound) or (top_fitness > best_fitness):
+                            best_rule_set = y_rule_candidates[top_id]
+                            best_fitness = top_fitness
+                            best_confidence = top_confidence
+                            best_configs = {"bin_strategy":bin_strategy, "num_grids":num_grids, "min_support":min_support}
+                            print(bin_strategy,num_grids, min_support,"\n top rule set",y_rule_candidates[top_id])
 
-                    elif sort_by == "confidence" and top_confidence > best_confidence:
-                        best_rule_set = y_rule_candidates[0]
+                    elif (best_confidence < confidence_lower_bound) and (top_fitness > best_fitness):
+                        best_rule_set = y_rule_candidates[top_id]
+                        best_fitness = top_fitness
                         best_confidence = top_confidence
-                        best_configs = {"bin_strategy":bin_strategy, "num_grids":num_grids, "min_support":min_support}
+                        best_configs = {"bin_strategy":bin_strategy, "num_grids":num_grids, "min_support":min_support}  
+                        print(bin_strategy,num_grids, min_support,"\n top rule set",y_rule_candidates[top_id])
+ 
             config_metric_records[(bin_strategy,num_grids)]["top_confidence_records"]=top_confidence_records
             config_metric_records[(bin_strategy,num_grids)]["top_fitness_records"]=top_fitness_records
             config_metric_records[(bin_strategy,num_grids)]["actual_support"]=actual_supports
@@ -914,4 +943,65 @@ def param_grid_search_for_amore(bin_strategies,ng_range,support_range,X,fids,tar
 
 
 
+def sequential_covering(X,fids,target_indices,y,grid_search_params,c=1,confidence_lower_bound = 0.8, min_confidence=0.6,method="amore",
+                        initial_max_depth=1,max_depth=4,top_K=3,sort_by="fitness",feature_types=None,local_x=None,verbose=False,
+                        feature_names=None,depth_gain=0.005,increase_depth=False,seed=42):
+    best_rule_sets = []
+    s_max_depth = initial_max_depth
+    tot_target_samples = np.sum(target_indices)
+    support_range = grid_search_params["support_range"]
+    while(np.sum(target_indices)>= np.min(support_range)):
+        if method == "amore":
+            bin_strategies = grid_search_params["bin_strategies"]
+            ng_range = grid_search_params["ng_range"]
+            best_rule_set, best_configs, config_metric_records = param_grid_search_for_amore(bin_strategies,ng_range,support_range,X,fids,target_indices,y,c=c,confidence_lower_bound = confidence_lower_bound,
+                                max_depth=s_max_depth,top_K=top_K,sort_by=sort_by,feature_types=feature_types,local_x=local_x,depth_gain=depth_gain,verbose=verbose)
+        
+        elif method == "dt":
+            criteria = grid_search_params["criteria"]
+            weight_options = grid_search_params["weight_options"]
+            best_rule_set, best_configs, config_metric_records = param_grid_search_for_DT(criteria,support_range,weight_options,X,y,target_indices,c=c,max_depth=s_max_depth,feature_names=feature_names,
+                                                                                          confidence_lower_bound=confidence_lower_bound,seed=seed)
+        else:
+            raise ValueError("method not supported")
 
+        
+        if best_rule_set is None or best_rule_set["confidence"] < min_confidence:
+            break
+        
+        best_rule_sets.append(best_rule_set)
+        print("best rule set {}: {}".format(len(best_rule_sets),best_rule_set))
+        sample_set = np.hstack([op_map[r[-2]](X[...,int(r[0])],r[-1]).reshape(-1,1) for r in best_rule_set["rules"]]).all(axis=1)
+        print("check size",target_indices.shape,sample_set.shape,X.shape)
+        X = X[~sample_set]
+        y = y[~sample_set]
+        target_indices = target_indices[~sample_set]
+        
+        print("remaining target samples",np.sum(target_indices))
+        
+        if increase_depth and s_max_depth < max_depth: 
+            s_max_depth+=1
+            
+    tot_coverage = (tot_target_samples - np.sum(target_indices))/tot_target_samples
+    print("total coverage",tot_coverage)
+    return best_rule_sets,tot_coverage
+
+
+    
+def display_sequnce_rule_sets(best_rule_sets,tot_coverage,feature_names=None):
+    tot_confidence, tot_fitness, tot_support = [], [], 0. 
+    for i in range(len(best_rule_sets)):
+        prefix = "IF" if i==0 else "ELSE IF"   
+        if feature_names is not None:
+            best_rule_sets[i]["rules"] = replace_feature_names(best_rule_sets[i]["rules"],feature_names)
+        print(prefix+" "+str(best_rule_sets[i]["rules"])+": \n")
+        print("\t fitness: ",best_rule_sets[i]["fitness"])
+        print("\t confidence: ",best_rule_sets[i]["confidence"])
+        print("\t support: ",best_rule_sets[i]["support"])
+        tot_support += best_rule_sets[i]["support"]
+        tot_confidence.append(best_rule_sets[i]["confidence"]*best_rule_sets[i]["support"])
+        tot_fitness.append(best_rule_sets[i]["fitness"]*best_rule_sets[i]["support"])
+    print("total coverage: ",tot_coverage)
+    print("weighted confidence: ",np.sum(tot_confidence)/tot_support)
+    print("weighted fitness: ",np.sum(tot_fitness)/tot_support)
+        

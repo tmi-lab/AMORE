@@ -204,6 +204,9 @@ def param_grid_search_for_DT(criteria,support_range,weight_options,X,y,target_in
                     best_rule_set = (rule_list[top_id],rule_metric_list[top_id])
                     best_fitness = top_fitness
                     best_configs = {"criterion":criterion,"min_support":min_support,"class_weight":cw}  
+                    print("best_fitness: ",best_fitness)
+                    print("Best Rule Set Updated: ",best_rule_set)
+                    print("Best Configs Updated: ",best_configs)
             config_metric_records[(criterion,wname)]["top_confidence_records"]=top_confidence_records
             config_metric_records[(criterion,wname)]["top_fitness_records"]=top_fitness_records
             config_metric_records[(criterion,wname)]["actual_support"]=actual_supports
