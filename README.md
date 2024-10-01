@@ -2,7 +2,8 @@
 # AMORE
 
 Automatic Model-agnostic Regional Rule Extraction (AMORE) is the implementation of our paper ["Enabling Regional Explainability by Automatic and
-Model-agnostic Rule Extraction"](https://arxiv.org/abs/xxx). 
+Model-agnostic Rule Extraction"](https://arxiv.org/abs/2406.17885
+). 
 
 ## Getting Started
 
