@@ -146,11 +146,13 @@ def search_feature_intervals(f_val,peaks,grids,ratios,supports,target_indices,pr
                                                            prev_cond_indices=prev_cond_indices,min_support=min_support,local=local,verbose=verbose)     
 
         if sup < min_support or cond_ratio < 1.0001:
-            #print('not qualified',sup,cond_ratio)
+            if verbose:
+                print('not qualified',sup,cond_ratio)
             continue
         else:          
             valid = True
             if left == f_val.min() and right == f_val.max():
+                ## no need to include the whole range
                 valid = False
                 
             if valid:
@@ -891,17 +893,21 @@ def param_grid_search_for_amore(bin_strategies,ng_range,support_range,X,fids,tar
                     top_confidence_records.append(0)
                     top_fitness_records.append(0)            
                     actual_supports.append(0)
+                    if verbose:
+                        print("no rule set found")
                     continue
                 
                 top_id = 0
                 if sort_by == "fitness":
                     ## find the first rule set with confidence larger than confidence_lower_bound
                     while top_id < len(y_rule_candidates) and y_rule_candidates[top_id]["confidence"] < confidence_lower_bound:
-                        # print("skip rule set",top_id,y_rule_candidates[top_id])
+                        if verbose:
+                            print("skip rule set",top_id,y_rule_candidates[top_id])
                         top_id += 1
                     ## if no rule set with confidence larger than confidence_lower_bound, use the first one
                     if top_id == len(y_rule_candidates):
-                        # print("no rule set with confidence larger than confidence_lower_bound")
+                        if verbose:
+                            print("no rule set with confidence larger than confidence_lower_bound")
                         top_id = 0
                         
                 
@@ -946,6 +952,37 @@ def param_grid_search_for_amore(bin_strategies,ng_range,support_range,X,fids,tar
 def sequential_covering(X,fids,target_indices,y,grid_search_params,c=1,confidence_lower_bound = 0.8, min_confidence=0.6,method="amore",
                         initial_max_depth=1,max_depth=4,top_K=3,sort_by="fitness",feature_types=None,local_x=None,verbose=False,
                         feature_names=None,depth_gain=0.005,increase_depth=False,seed=42):
+    """sequential covering iteratively learns a rule set for a specific data subgroup until a decision set that covers the entire target group is composed. The samples that are covered by the previous rule set will be removed from the data set for the next iteration. In this implementation, sequential covering will stop when there is no rule set that can give a confidence higher than min_confidence. 
+
+    Args:
+        X (numpy array): input features of all training samples
+        fids (int list or array): feature indices to search rules
+        target_indices (binary array): bool indices of samples that satisfy the target pattern
+        y (int array): true labels of all training samples
+        grid_search_params (dict): hyperparameters for grid search
+        c (int, optional): target class index. Defaults to 1.
+        confidence_lower_bound (float, optional): for selecting best rule set with fitness. Defaults to 0.8.
+        min_confidence (float, optional): minimum confidence for extracted rule sets. Defaults to 0.6.
+        method (str, optional): 'amore' or 'dt'. Defaults to "amore".
+        initial_max_depth (int, optional): max depth of the first rule set. Defaults to 1.
+        max_depth (int, optional): max depth of following rule sets. Defaults to 4.
+        top_K (int, optional): number of rules can be added at each step. Defaults to 3.
+        sort_by (str, optional): metric used to sort the rule sets. Defaults to "fitness".
+        feature_types (list, optional): specified feature types. Defaults to None.
+        local_x (numpy array, optional): features of a specified sample. Defaults to None.
+        verbose (bool, optional): print information for debug. Defaults to False.
+        feature_names (list, optional): feature names. Defaults to None.
+        depth_gain (float, optional): the ratio gain for adding a new rule in a rule set. Defaults to 0.005.
+        increase_depth (bool, optional): increase max depth at each iteration, working together with initial_max_depth. Defaults to False.
+        seed (int, optional): random seed. Defaults to 42.
+
+    Raises:
+        ValueError: _description_
+
+    Returns:
+        _type_: _description_
+    """
+    
     best_rule_sets = []
     s_max_depth = initial_max_depth
     tot_target_samples = np.sum(target_indices)
@@ -967,6 +1004,9 @@ def sequential_covering(X,fids,target_indices,y,grid_search_params,c=1,confidenc
 
         
         if best_rule_set is None or best_rule_set["confidence"] < min_confidence:
+            if verbose:
+                print("best confidence lower than min_confidence")
+                print("best rule set",best_rule_set)    
             break
         
         best_rule_sets.append(best_rule_set)
